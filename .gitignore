@@ -2,6 +2,7 @@
 .derivedData/
 build/
 dist/
+docs/screenshots/raw/
 *.xcuserstate
 xcuserdata/
 Config.local.plist

@@ -2,6 +2,22 @@
 
 macOS 菜单栏工具：点击图标查看 AI 订阅账号额度（风格类似 iStats）。
 
+## 界面预览
+
+菜单栏面板：多账号周额度剩余、状态点、重置倒计时；底部可刷新 / 打开设置。
+
+![菜单栏账号额度面板](docs/screenshots/menu-panel.png)
+
+悬停账号详情：周额度、月度额度与账号状态（Auth Index 已打码）。
+
+![账号悬停详情面板](docs/screenshots/account-detail.png)
+
+设置：配置 CLIProxyAPI / Sub2API 数据源（API Host 已打码，密钥以密文显示）。
+
+![设置 - CLIProxyAPI](docs/screenshots/settings-cliproxy.png)
+
+> 截图中的邮箱、Auth Index、API Host 均已打码，不代表真实凭据。
+
 ## v0 目标
 
 - 菜单栏常驻图标

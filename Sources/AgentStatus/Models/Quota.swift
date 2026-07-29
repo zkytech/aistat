@@ -43,6 +43,22 @@ struct WeeklyQuota: Sendable, Equatable {
     var isExhausted: Bool {
         remainingPercent.map { $0 <= 0 } ?? false
     }
+
+    /// When weekly `creditUsagePercent` is absent, mirror CLIProxy management UI:
+    /// fall back to monthly included usage / limit as the displayed usage percent.
+    func fillingMissingUsage(from monthly: MonthlyQuota?) -> WeeklyQuota {
+        if usedPercent != nil { return self }
+        guard let monthly, monthly.limitCents > 0 else { return self }
+
+        let cappedUsed = min(max(monthly.usedCents, 0), monthly.limitCents)
+        let percent = (Double(cappedUsed) / Double(monthly.limitCents) * 100.0).clampedPercentage
+        return WeeklyQuota(
+            usedPercent: percent,
+            periodStart: periodStart,
+            periodEnd: periodEnd,
+            productUsage: productUsage
+        )
+    }
 }
 
 struct MonthlyQuota: Sendable, Equatable {
@@ -56,6 +72,63 @@ struct MonthlyQuota: Sendable, Equatable {
     var remainingPercent: Double? {
         guard limitCents > 0 else { return nil }
         return (Double(remainingCents) / Double(limitCents) * 100.0).clampedPercentage
+    }
+}
+
+struct Sub2APIUsage: Decodable, Sendable, Equatable {
+    let mode: String
+    let planName: String?
+    let unit: String?
+    let balance: Double?
+    let remaining: Double?
+    let quota: Sub2APIQuota?
+    let subscription: Sub2APISubscription?
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, planName, unit, balance, remaining, quota, subscription
+    }
+
+    var availableBalance: Double? {
+        if let remaining { return max(remaining, 0) }
+        if let remaining = quota?.remaining { return max(remaining, 0) }
+        if let balance { return max(balance, 0) }
+        if let monthlyLimit = subscription?.monthlyLimitUSD,
+           let monthlyUsage = subscription?.monthlyUsageUSD {
+            return max(monthlyLimit - monthlyUsage, 0)
+        }
+        if let weeklyLimit = subscription?.weeklyLimitUSD,
+           let weeklyUsage = subscription?.weeklyUsageUSD {
+            return max(weeklyLimit - weeklyUsage, 0)
+        }
+        if let dailyLimit = subscription?.dailyLimitUSD,
+           let dailyUsage = subscription?.dailyUsageUSD {
+            return max(dailyLimit - dailyUsage, 0)
+        }
+        return nil
+    }
+}
+
+struct Sub2APIQuota: Decodable, Sendable, Equatable {
+    let limit: Double?
+    let used: Double?
+    let remaining: Double?
+}
+
+struct Sub2APISubscription: Decodable, Sendable, Equatable {
+    let dailyUsageUSD: Double?
+    let dailyLimitUSD: Double?
+    let weeklyUsageUSD: Double?
+    let weeklyLimitUSD: Double?
+    let monthlyUsageUSD: Double?
+    let monthlyLimitUSD: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case dailyUsageUSD = "daily_usage_usd"
+        case dailyLimitUSD = "daily_limit_usd"
+        case weeklyUsageUSD = "weekly_usage_usd"
+        case weeklyLimitUSD = "weekly_limit_usd"
+        case monthlyUsageUSD = "monthly_usage_usd"
+        case monthlyLimitUSD = "monthly_limit_usd"
     }
 }
 

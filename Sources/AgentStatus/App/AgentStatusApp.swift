@@ -25,7 +25,7 @@ struct AgentStatusApp: App {
         Window("设置", id: Self.settingsWindowID) {
             SettingsView(store: store)
         }
-        .defaultSize(width: 640, height: 460)
+        .defaultSize(width: 820, height: 620)
 
         // Keep system Settings entry as a secondary path.
         Settings {
@@ -40,9 +40,11 @@ struct AgentStatusApp: App {
         ) ?? NSImage()
 
         // Prefer the 36px asset displayed at 18pt as a template image.
+        // Packaged .app: Contents/Resources/*.png via Bundle.main
+        // `swift run`: SPM resource bundle via Bundle.module
         for name in ["MenuBarIconTemplate@2x", "MenuBarIconTemplate"] {
             guard
-                let url = Bundle.module.url(forResource: name, withExtension: "png"),
+                let url = menuBarIconURL(named: name),
                 let image = NSImage(contentsOf: url)
             else {
                 continue
@@ -55,4 +57,11 @@ struct AgentStatusApp: App {
 
         return fallback
     }()
+
+    private static func menuBarIconURL(named name: String) -> URL? {
+        if let url = Bundle.main.url(forResource: name, withExtension: "png") {
+            return url
+        }
+        return Bundle.module.url(forResource: name, withExtension: "png")
+    }
 }

@@ -104,6 +104,26 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertFalse(response.body.config.weeklyQuota.isExhausted)
     }
 
+    func testWeeklyQuotaFillsMissingPercentFromMonthly() {
+        let weekly = WeeklyQuota(
+            usedPercent: nil,
+            periodStart: nil,
+            periodEnd: Date(timeIntervalSince1970: 1_700_000_000),
+            productUsage: []
+        )
+        let filled = weekly.fillingMissingUsage(from: MonthlyQuota(limitCents: 15_000, usedCents: 5_336))
+        XCTAssertEqual(filled.usedPercent ?? -1, 35.57333333333334, accuracy: 0.0001)
+        XCTAssertEqual(filled.remainingPercent ?? -1, 64.42666666666666, accuracy: 0.0001)
+        XCTAssertEqual(filled.periodEnd, weekly.periodEnd)
+
+        let kept = WeeklyQuota(usedPercent: 12, periodStart: nil, periodEnd: nil, productUsage: [])
+            .fillingMissingUsage(from: MonthlyQuota(limitCents: 15_000, usedCents: 5_336))
+        XCTAssertEqual(kept.usedPercent, 12)
+
+        let stillMissing = weekly.fillingMissingUsage(from: nil)
+        XCTAssertNil(stillMissing.usedPercent)
+    }
+
     func testWeeklyBodyWithMissingProductUsagePercent() throws {
         let nested = """
         {"config":{"creditUsagePercent":68.0,"currentPeriod":{"start":"2026-07-28T14:25:29.139195+00:00","end":"2026-08-04T14:25:29.139195+00:00"},"productUsage":[{"product":"GrokBuild","usagePercent":68.0},{"product":"GrokChat"}]}}
@@ -143,6 +163,23 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(monthly.remainingPercent, 77.5)
     }
 
+    func testSub2APIUsageDecodesAllBalanceModes() throws {
+        let unrestricted = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"unrestricted","planName":"按量","unit":"USD","balance":12.15740932,"remaining":12.15740932}
+        """.utf8))
+        XCTAssertEqual(unrestricted.availableBalance, 12.15740932)
+        XCTAssertEqual(unrestricted.unit, "USD")
+
+        let quotaLimited = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"quota_limited","quota":{"limit":100,"used":35.5,"remaining":64.5}}
+        """.utf8))
+        XCTAssertEqual(quotaLimited.availableBalance, 64.5)
+
+        let subscription = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"subscription","subscription":{"monthly_usage_usd":7.25,"monthly_limit_usd":20}}
+        """.utf8))
+        XCTAssertEqual(subscription.availableBalance, 12.75)
+    }
     func testDisplayDateFormatterUsesLocalWallClockFormat() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
@@ -194,5 +231,29 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertNil(WeeklyQuota(usedPercent: nil, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent)
         XCTAssertTrue(WeeklyQuota(usedPercent: 100, periodStart: nil, periodEnd: nil, productUsage: []).isExhausted)
         XCTAssertFalse(WeeklyQuota(usedPercent: 99, periodStart: nil, periodEnd: nil, productUsage: []).isExhausted)
+    }
+
+    func testRelativeResetFormatterCompactCountdown() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(
+            RelativeResetFormatter.string(until: now.addingTimeInterval(2 * 24 * 3600 + 4 * 3600 + 30), now: now),
+            "2天4时"
+        )
+        XCTAssertEqual(
+            RelativeResetFormatter.string(until: now.addingTimeInterval(3 * 3600 + 12 * 60), now: now),
+            "3时12分"
+        )
+        XCTAssertEqual(
+            RelativeResetFormatter.string(until: now.addingTimeInterval(45 * 60), now: now),
+            "45分"
+        )
+        XCTAssertEqual(
+            RelativeResetFormatter.string(until: now.addingTimeInterval(20), now: now),
+            "即将重置"
+        )
+        XCTAssertEqual(
+            RelativeResetFormatter.string(until: now.addingTimeInterval(-5), now: now),
+            "已到期"
+        )
     }
 }

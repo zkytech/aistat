@@ -7,6 +7,8 @@ final class QuotaStore: ObservableObject {
     static let minimumRefreshInterval: TimeInterval = TimeInterval(AppConfiguration.minimumRefreshIntervalSeconds)
 
     @Published private(set) var accounts: [AccountQuota] = []
+    @Published private(set) var sub2APIUsage: Sub2APIUsage?
+    @Published private(set) var sub2APIError: String?
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var nextRefreshAvailableAt: Date?
@@ -15,9 +17,11 @@ final class QuotaStore: ObservableObject {
     @Published private(set) var menuTitle: String = "Grok --"
 
     private var clientFactory: (AppConfiguration) -> any CLIProxyClientProtocol
+    private var sub2APIClientFactory: (AppConfiguration) -> any Sub2APIClientProtocol
     private var refreshTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var lastRefreshAttemptAt: Date?
+    private var hasStarted = false
     private let includeMonthly: Bool
     private let nowProvider: () -> Date
 
@@ -31,21 +35,27 @@ final class QuotaStore: ObservableObject {
         configuration: AppConfiguration = AppConfigurationStore.load(),
         includeMonthly: Bool = true,
         clientFactory: @escaping (AppConfiguration) -> any CLIProxyClientProtocol = { CLIProxyClient(configuration: $0) },
+        sub2APIClientFactory: @escaping (AppConfiguration) -> any Sub2APIClientProtocol = { Sub2APIClient(configuration: $0) },
         nowProvider: @escaping () -> Date = { Date() }
     ) {
         self.configuration = configuration
         self.includeMonthly = includeMonthly
         self.clientFactory = clientFactory
+        self.sub2APIClientFactory = sub2APIClientFactory
         self.nowProvider = nowProvider
         updateMenuTitle()
     }
 
     func start() {
-        restartAutoRefresh()
-        Task { await refresh(force: true) }
+        if !hasStarted {
+            hasStarted = true
+            restartAutoRefresh()
+        }
+        Task { await refresh(force: false) }
     }
 
     func stop() {
+        hasStarted = false
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
         refreshTask?.cancel()
@@ -93,9 +103,14 @@ final class QuotaStore: ObservableObject {
     }
 
     private func performRefresh() async {
-        guard configuration.isConfigured else {
+        let hasCLIProxy = configuration.isConfigured
+        let hasSub2API = configuration.isSub2APIConfigured
+
+        guard hasCLIProxy || hasSub2API else {
             globalError = CLIProxyClientError.notConfigured.localizedDescription
             accounts = []
+            sub2APIUsage = nil
+            sub2APIError = nil
             updateMenuTitle()
             return
         }
@@ -104,70 +119,98 @@ final class QuotaStore: ObservableObject {
         defer { isRefreshing = false }
 
         let client = clientFactory(configuration)
+        let sub2APIClient = sub2APIClientFactory(configuration)
         let shouldFetchMonthly = includeMonthly
         let now = nowProvider()
 
-        do {
-            let authAccounts = try await client.fetchXAIAccounts()
-            if authAccounts.isEmpty {
-                accounts = []
-                globalError = nil
-                lastRefreshAt = now
-                updateMenuTitle()
-                return
+        async let sub2APIResult: Result<Sub2APIUsage, Error>? = {
+            guard hasSub2API else { return nil }
+            do {
+                return .success(try await sub2APIClient.fetchUsage())
+            } catch {
+                return .failure(error)
             }
+        }()
 
-            var next: [AccountQuota] = authAccounts.map {
-                AccountQuota(account: $0, weekly: nil, monthly: nil, errorMessage: nil)
-            }
+        if hasCLIProxy {
+            do {
+                let authAccounts = try await client.fetchXAIAccounts()
+                if authAccounts.isEmpty {
+                    accounts = []
+                    lastRefreshAt = now
+                    updateMenuTitle()
+                    globalError = nil
+                } else {
+                    var next: [AccountQuota] = authAccounts.map {
+                        AccountQuota(account: $0, weekly: nil, monthly: nil, errorMessage: nil)
+                    }
 
-            await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, String?).self) { group in
-                for (index, item) in next.enumerated() {
-                    let authIndex = item.account.authIndex
-                    group.addTask {
-                        do {
-                            let weekly = try await client.fetchWeeklyQuota(authIndex: authIndex)
-                            var monthly: MonthlyQuota?
-                            if shouldFetchMonthly {
-                                monthly = try? await client.fetchMonthlyQuota(authIndex: authIndex)
+                    await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, String?).self) { group in
+                        for (index, item) in next.enumerated() {
+                            let authIndex = item.account.authIndex
+                            group.addTask {
+                                do {
+                                    let weekly = try await client.fetchWeeklyQuota(authIndex: authIndex)
+                                    var monthly: MonthlyQuota?
+                                    if shouldFetchMonthly {
+                                        monthly = try? await client.fetchMonthlyQuota(authIndex: authIndex)
+                                    }
+                                    return (index, weekly.fillingMissingUsage(from: monthly), monthly, nil)
+                                } catch {
+                                    return (index, nil, nil, error.localizedDescription)
+                                }
                             }
-                            return (index, weekly, monthly, nil)
-                        } catch {
-                            return (index, nil, nil, error.localizedDescription)
+                        }
+
+                        for await (index, weekly, monthly, errorMessage) in group {
+                            next[index].weekly = weekly
+                            next[index].monthly = monthly
+                            next[index].errorMessage = errorMessage
                         }
                     }
-                }
 
-                for await (index, weekly, monthly, errorMessage) in group {
-                    next[index].weekly = weekly
-                    next[index].monthly = monthly
-                    next[index].errorMessage = errorMessage
+                    let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
+                    accounts = sorted
+                    lastRefreshAt = now
+                    updateMenuTitle()
+
+                    let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
+                    do {
+                        try await client.updateAuthPriorities(priorities)
+                        globalError = nil
+                    } catch {
+                        // Keep sorted quota data even if priority write-back fails.
+                        globalError = "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
+                    }
                 }
+            } catch {
+                // Keep previous successful account rows if list fetch fails later.
+                globalError = error.localizedDescription
+                updateMenuTitle()
             }
-
-            let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
-            accounts = sorted
+        } else {
+            accounts = []
+            globalError = nil
             lastRefreshAt = now
             updateMenuTitle()
+        }
 
-            let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
-            do {
-                try await client.updateAuthPriorities(priorities)
-                globalError = nil
-            } catch {
-                // Keep sorted quota data even if priority write-back fails.
-                globalError = "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
-            }
-        } catch {
-            // Keep previous successful account rows if list fetch fails later.
-            globalError = error.localizedDescription
-            updateMenuTitle()
+        switch await sub2APIResult {
+        case .success(let usage):
+            sub2APIUsage = usage
+            sub2APIError = nil
+            lastRefreshAt = now
+        case .failure(let error):
+            sub2APIError = error.localizedDescription
+        case .none:
+            sub2APIUsage = nil
+            sub2APIError = nil
         }
     }
 
     private func restartAutoRefresh() {
         autoRefreshTask?.cancel()
-        guard configuration.isConfigured else {
+        guard configuration.isConfigured || configuration.isSub2APIConfigured else {
             autoRefreshTask = nil
             return
         }
@@ -181,7 +224,6 @@ final class QuotaStore: ObservableObject {
             }
         }
     }
-
     private func updateMenuTitle() {
         let remainingCandidates = accounts.compactMap { item -> Double? in
             if item.account.disabled || item.account.unavailable {

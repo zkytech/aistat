@@ -3,10 +3,40 @@ import Foundation
 struct AppConfiguration: Codable, Equatable, Sendable {
     var baseURL: String
     var managementKey: String
+    var sub2APIBaseURL: String
+    var sub2APIKey: String
     var refreshIntervalSeconds: Int
 
+    init(
+        baseURL: String,
+        managementKey: String,
+        sub2APIBaseURL: String = "",
+        sub2APIKey: String = "",
+        refreshIntervalSeconds: Int
+    ) {
+        self.baseURL = baseURL
+        self.managementKey = managementKey
+        self.sub2APIBaseURL = sub2APIBaseURL
+        self.sub2APIKey = sub2APIKey
+        self.refreshIntervalSeconds = refreshIntervalSeconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseURL, managementKey, sub2APIBaseURL, sub2APIKey, refreshIntervalSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        managementKey = try container.decodeIfPresent(String.self, forKey: .managementKey) ?? ""
+        sub2APIBaseURL = try container.decodeIfPresent(String.self, forKey: .sub2APIBaseURL) ?? ""
+        sub2APIKey = try container.decodeIfPresent(String.self, forKey: .sub2APIKey) ?? ""
+        refreshIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalSeconds)
+            ?? Self.defaultRefreshIntervalSeconds
+    }
+
     static let defaultRefreshIntervalSeconds = 300
-    static let minimumRefreshIntervalSeconds = 180
+    static let minimumRefreshIntervalSeconds = 60
 
     static var empty: AppConfiguration {
         AppConfiguration(
@@ -20,6 +50,10 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         !normalizedBaseURL.isEmpty && !normalizedManagementKey.isEmpty
     }
 
+    var isSub2APIConfigured: Bool {
+        !normalizedSub2APIBaseURL.isEmpty && !normalizedSub2APIKey.isEmpty
+    }
+
     var normalizedBaseURL: String {
         baseURL
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,6 +62,16 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 
     var normalizedManagementKey: String {
         managementKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedSub2APIBaseURL: String {
+        sub2APIBaseURL
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    var normalizedSub2APIKey: String {
+        sub2APIKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var refreshInterval: TimeInterval {

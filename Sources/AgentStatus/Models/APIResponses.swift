@@ -128,8 +128,39 @@ struct BillingPeriod: Decodable, Sendable {
         forKey key: CodingKeys
     ) -> Date? {
         guard let value = try? container.decodeIfPresent(String.self, forKey: key) else { return nil }
-        return ISO8601DateFormatter.withFractionalSeconds.date(from: value)
-            ?? ISO8601DateFormatter().date(from: value)
+        return APIDateParser.date(from: value)
+    }
+}
+
+enum APIDateParser {
+    static func date(from value: String) -> Date? {
+        if let date = ISO8601DateFormatter.withFractionalSeconds.date(from: value) {
+            return date
+        }
+        if let date = ISO8601DateFormatter().date(from: value) {
+            return date
+        }
+
+        // Handle timestamps with 1...6 fractional digits, e.g. 2026-07-28T14:25:29.139195+00:00
+        let patterns = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXXXX"
+        ]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        for pattern in patterns {
+            formatter.dateFormat = pattern
+            if let date = formatter.date(from: value) {
+                return date
+            }
+        }
+        return nil
     }
 }
 

@@ -2,13 +2,13 @@ import Foundation
 
 struct ProductUsage: Decodable, Sendable, Equatable, Identifiable {
     let product: String
-    let usagePercent: Double
+    let usagePercent: Double?
 
     var id: String { product }
 
-    init(product: String, usagePercent: Double) {
+    init(product: String, usagePercent: Double?) {
         self.product = product
-        self.usagePercent = usagePercent.clampedPercentage
+        self.usagePercent = usagePercent.map { $0.clampedPercentage }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -18,7 +18,11 @@ struct ProductUsage: Decodable, Sendable, Equatable, Identifiable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         product = try container.decode(String.self, forKey: .product)
-        usagePercent = try container.decode(FlexibleDouble.self, forKey: .usagePercent).value.clampedPercentage
+        if container.contains(.usagePercent), try !container.decodeNil(forKey: .usagePercent) {
+            usagePercent = try container.decode(FlexibleDouble.self, forKey: .usagePercent).value.clampedPercentage
+        } else {
+            usagePercent = nil
+        }
     }
 }
 

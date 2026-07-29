@@ -49,26 +49,23 @@ struct MenuBarContentView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    if let globalError = store.globalError {
-                        Text(globalError)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
-                            .padding(.bottom, 4)
-                    }
+            VStack(alignment: .leading, spacing: 4) {
+                if let globalError = store.globalError {
+                    Text(globalError)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .padding(.bottom, 4)
+                }
 
-                    ForEach(store.accounts) { item in
-                        AccountQuotaRow(item: item)
-                        if item.id != store.accounts.last?.id {
-                            Divider()
-                        }
+                ForEach(store.accounts) { item in
+                    AccountQuotaRow(item: item)
+                    if item.id != store.accounts.last?.id {
+                        Divider()
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
             }
-            .frame(maxHeight: 420)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
         }
     }
 

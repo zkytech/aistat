@@ -28,7 +28,7 @@ struct AccountQuotaRow: View {
                 Text(errorMessage)
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
-                    .lineLimit(2)
+                    .lineLimit(3)
             } else {
                 Text("暂无周限额数据")
                     .font(.system(size: 11))
@@ -51,17 +51,22 @@ struct AccountQuotaRow: View {
             .frame(width: 8, height: 8)
     }
 
+    /// Priority: disabled → fetch error → weekly exhausted → unavailable → original status → active.
+    /// exhausted and unavailable are both red, but labels stay distinct.
     private var statusText: String {
         if item.account.disabled {
             return "disabled"
         }
-        if item.account.unavailable || item.weekly?.isExhausted == true {
-            return "unavailable"
-        }
         if item.errorMessage != nil {
             return "error"
         }
-        if let status = item.account.status, !status.isEmpty {
+        if item.weekly?.isExhausted == true {
+            return "exhausted"
+        }
+        if item.account.unavailable {
+            return "unavailable"
+        }
+        if let status = item.account.status?.trimmingCharacters(in: .whitespacesAndNewlines), !status.isEmpty {
             return status
         }
         return "active"
@@ -71,10 +76,10 @@ struct AccountQuotaRow: View {
         switch statusText {
         case "disabled":
             return .secondary
-        case "unavailable", "error", "exhausted":
+        case "exhausted", "unavailable", "error":
             return .red
         default:
-            return item.isUnavailable ? .red : .green
+            return .green
         }
     }
 
@@ -107,12 +112,21 @@ struct AccountQuotaRow: View {
             }
 
             if !weekly.productUsage.isEmpty {
-                Text(weekly.productUsage.map { "\($0.product) \(Int($0.usagePercent.rounded()))%" }.joined(separator: " · "))
+                Text(productUsageText(weekly.productUsage))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
+    }
+
+    private func productUsageText(_ items: [ProductUsage]) -> String {
+        items.map { item in
+            if let percent = item.usagePercent {
+                return "\(item.product) \(Int(percent.rounded()))%"
+            }
+            return item.product
+        }.joined(separator: " · ")
     }
 
     private func usedText(_ used: Double?) -> String {

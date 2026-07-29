@@ -60,17 +60,19 @@ struct CLIProxyClient: CLIProxyClientProtocol {
     }
 
     func fetchWeeklyQuota(authIndex: String) async throws -> WeeklyQuota {
-        let body = try makeAPICallBody(authIndex: authIndex, url: Self.weeklyBillingURL)
-        let request = try makeManagementRequest(
-            path: "/v0/management/api-call",
-            method: "POST",
-            body: body
-        )
-        let data = try await perform(request)
-        do {
-            return try JSONDecoder().decode(APIProxyResponse.self, from: data).body.config.weeklyQuota
-        } catch {
-            throw CLIProxyClientError.decoding(error.localizedDescription)
+        try await withRetry(times: 2) {
+            let body = try makeAPICallBody(authIndex: authIndex, url: Self.weeklyBillingURL)
+            let request = try makeManagementRequest(
+                path: "/v0/management/api-call",
+                method: "POST",
+                body: body
+            )
+            let data = try await perform(request)
+            do {
+                return try JSONDecoder().decode(APIProxyResponse.self, from: data).body.config.weeklyQuota
+            } catch {
+                throw CLIProxyClientError.decoding(error.localizedDescription)
+            }
         }
     }
 
@@ -125,6 +127,22 @@ struct CLIProxyClient: CLIProxyClientProtocol {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         return request
+    }
+
+    private func withRetry<T>(times: Int, operation: () async throws -> T) async throws -> T {
+        var attempt = 0
+        var lastError: Error?
+        while attempt <= times {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                attempt += 1
+                if attempt > times { break }
+                try? await Task.sleep(nanoseconds: UInt64(150_000_000 * attempt))
+            }
+        }
+        throw lastError ?? CLIProxyClientError.emptyResponse
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {

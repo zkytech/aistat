@@ -84,6 +84,24 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertFalse(response.body.config.weeklyQuota.isExhausted)
     }
 
+    func testWeeklyBodyWithMissingProductUsagePercent() throws {
+        let nested = """
+        {"config":{"creditUsagePercent":68.0,"currentPeriod":{"start":"2026-07-28T14:25:29.139195+00:00","end":"2026-08-04T14:25:29.139195+00:00"},"productUsage":[{"product":"GrokBuild","usagePercent":68.0},{"product":"GrokChat"}]}}
+        """
+        let escaped = nested.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let json = """
+        {"body":"\(escaped)"}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(APIProxyResponse.self, from: json)
+        let weekly = response.body.config.weeklyQuota
+        XCTAssertEqual(weekly.usedPercent, 68)
+        XCTAssertEqual(weekly.productUsage.count, 2)
+        XCTAssertEqual(weekly.productUsage[0].usagePercent, 68)
+        XCTAssertNil(weekly.productUsage[1].usagePercent)
+        XCTAssertNotNil(weekly.periodEnd)
+    }
+
     func testMonthlyQuota() throws {
         let json = """
         {

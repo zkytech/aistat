@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -13,7 +14,11 @@ struct AgentStatusApp: App {
                     store.start()
                 }
         } label: {
-            Label(store.menuTitle, systemImage: "chart.bar.fill")
+            Label {
+                Text(store.menuTitle)
+            } icon: {
+                Image(nsImage: Self.menuBarIcon)
+            }
         }
         .menuBarExtraStyle(.window)
 
@@ -27,4 +32,27 @@ struct AgentStatusApp: App {
             SettingsView(store: store)
         }
     }
+
+    private static let menuBarIcon: NSImage = {
+        let fallback = NSImage(
+            systemSymbolName: "chart.bar.fill",
+            accessibilityDescription: "Agent Status"
+        ) ?? NSImage()
+
+        // Prefer the 36px asset displayed at 18pt as a template image.
+        for name in ["MenuBarIconTemplate@2x", "MenuBarIconTemplate"] {
+            guard
+                let url = Bundle.module.url(forResource: name, withExtension: "png"),
+                let image = NSImage(contentsOf: url)
+            else {
+                continue
+            }
+
+            image.isTemplate = true
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+
+        return fallback
+    }()
 }

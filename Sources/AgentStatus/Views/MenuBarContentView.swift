@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 struct MenuBarContentView: View {
     @ObservedObject var store: QuotaStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -11,7 +13,7 @@ struct MenuBarContentView: View {
             Divider()
             footer
         }
-        .frame(width: 340)
+        .frame(width: 360)
         .padding(.vertical, 8)
     }
 
@@ -36,7 +38,7 @@ struct MenuBarContentView: View {
                 Text(globalError)
                     .font(.system(size: 12))
                     .foregroundStyle(.red)
-                Text("打开 Settings 检查 baseURL 与 managementKey。")
+                Text("打开设置检查 baseURL 与 managementKey。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -76,22 +78,22 @@ struct MenuBarContentView: View {
             } label: {
                 Label("刷新", systemImage: "arrow.clockwise")
             }
-            .disabled(store.isRefreshing)
-            .help("手动刷新（防抖 1.5 秒）")
+            .disabled(!store.canManualRefresh)
+            .help(refreshHelpText)
 
             Text(lastRefreshText)
-                .font(.system(size: 10))
+                .font(.system(size: 10).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
             Spacer()
 
-            Button("Settings") {
+            Button("设置") {
                 openSettingsWindow()
             }
             .help("打开设置")
 
-            Button("Quit") {
+            Button("退出") {
                 NSApplication.shared.terminate(nil)
             }
             .help("退出")
@@ -106,19 +108,28 @@ struct MenuBarContentView: View {
         guard let lastRefreshAt = store.lastRefreshAt else {
             return "尚未刷新"
         }
-        return "上次 \(lastRefreshAt.formatted(date: .omitted, time: .shortened))"
+        return "上次 \(DisplayDateFormatter.string(from: lastRefreshAt))"
+    }
+
+    private var refreshHelpText: String {
+        if store.isRefreshing {
+            return "正在刷新…"
+        }
+        if let next = store.nextRefreshAvailableAt, next > Date() {
+            return "最短刷新间隔 3 分钟，下次可刷新 \(DisplayDateFormatter.string(from: next))"
+        }
+        return "手动刷新（最短间隔 3 分钟）"
     }
 
     private func openSettingsWindow() {
-        // macOS 14+ uses showSettingsWindow:; macOS 13 uses showPreferencesWindow:.
-        let settingsSelector = Selector(("showSettingsWindow:"))
-        if NSApp.responds(to: settingsSelector) {
-            NSApp.sendAction(settingsSelector, to: nil, from: nil)
-            return
-        }
-        let preferencesSelector = Selector(("showPreferencesWindow:"))
-        if NSApp.responds(to: preferencesSelector) {
-            NSApp.sendAction(preferencesSelector, to: nil, from: nil)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: AgentStatusApp.settingsWindowID)
+
+        // MenuBarExtra can leave the new window behind; force key/front after open.
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.title == "设置" || window.identifier?.rawValue == AgentStatusApp.settingsWindowID {
+                window.makeKeyAndOrderFront(nil)
+            }
         }
     }
 }

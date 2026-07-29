@@ -5,6 +5,8 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
     let email: String?
     let account: String?
     let label: String?
+    /// Auth file name used by Management API field updates (e.g. `foo.json`).
+    let name: String?
     let authIndex: String
     let status: String?
     let unavailable: Bool
@@ -15,6 +17,14 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
     let failed: Int?
 
     var id: String { authIndex }
+
+    /// Preferred identifier when patching auth-file fields.
+    var managementName: String {
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        return authIndex
+    }
 
     var displayName: String {
         [email, account, label]
@@ -27,6 +37,7 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
         email: String? = nil,
         account: String? = nil,
         label: String? = nil,
+        name: String? = nil,
         authIndex: String,
         status: String? = nil,
         unavailable: Bool = false,
@@ -40,6 +51,7 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
         self.email = email
         self.account = account
         self.label = label
+        self.name = name
         self.authIndex = authIndex
         self.status = status
         self.unavailable = unavailable
@@ -51,7 +63,7 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case provider, email, account, label, status, unavailable, disabled, success, failed
+        case provider, email, account, label, name, status, unavailable, disabled, success, failed
         case authIndex = "auth_index"
         case statusMessage = "status_message"
         case nextRetryAfter = "next_retry_after"
@@ -63,6 +75,7 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
         email = try container.decodeIfPresent(String.self, forKey: .email)
         account = try container.decodeIfPresent(String.self, forKey: .account)
         label = try container.decodeIfPresent(String.self, forKey: .label)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
         authIndex = try container.decode(FlexibleString.self, forKey: .authIndex).value
         status = try container.decodeIfPresent(String.self, forKey: .status)
         unavailable = try container.decodeIfPresent(Bool.self, forKey: .unavailable) ?? false

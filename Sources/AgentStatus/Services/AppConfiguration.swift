@@ -6,6 +6,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var refreshIntervalSeconds: Int
 
     static let defaultRefreshIntervalSeconds = 300
+    static let minimumRefreshIntervalSeconds = 180
 
     static var empty: AppConfiguration {
         AppConfiguration(
@@ -30,7 +31,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     }
 
     var refreshInterval: TimeInterval {
-        TimeInterval(max(refreshIntervalSeconds, 30))
+        TimeInterval(max(refreshIntervalSeconds, Self.minimumRefreshIntervalSeconds))
     }
 }
 

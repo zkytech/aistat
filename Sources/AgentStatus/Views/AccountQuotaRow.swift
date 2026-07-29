@@ -52,7 +52,6 @@ struct AccountQuotaRow: View {
     }
 
     /// Priority: disabled → fetch error → weekly exhausted → unavailable → original status → active.
-    /// exhausted and unavailable are both red, but labels stay distinct.
     private var statusText: String {
         if item.account.disabled {
             return "disabled"
@@ -89,25 +88,25 @@ struct AccountQuotaRow: View {
 
     @ViewBuilder
     private func weeklySection(_ weekly: WeeklyQuota) -> some View {
-        let used = weekly.usedPercent
         let remaining = weekly.remainingPercent
+        let used = weekly.usedPercent
 
         VStack(alignment: .leading, spacing: 4) {
-            ProgressView(value: (used ?? 0) / 100.0)
-                .tint(progressTint(used: used))
+            ProgressView(value: (remaining ?? 0) / 100.0)
+                .tint(progressTint(remaining: remaining))
 
             HStack {
-                Text(usedText(used))
+                Text(remainingText(remaining))
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                 Spacer()
-                Text(remainingText(remaining))
+                Text(usedText(used))
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
             if let end = weekly.periodEnd {
-                Text("重置 \(end.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.system(size: 10))
+                Text("重置 \(DisplayDateFormatter.string(from: end))")
+                    .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
@@ -122,8 +121,8 @@ struct AccountQuotaRow: View {
 
     private func productUsageText(_ items: [ProductUsage]) -> String {
         items.map { item in
-            if let percent = item.usagePercent {
-                return "\(item.product) \(Int(percent.rounded()))%"
+            if let remaining = item.remainingPercent {
+                return "\(item.product) 剩 \(Int(remaining.rounded()))%"
             }
             return item.product
         }.joined(separator: " · ")
@@ -139,16 +138,19 @@ struct AccountQuotaRow: View {
         return String(format: "剩余 %.0f%%", remaining)
     }
 
-    private func progressTint(used: Double?) -> Color {
-        guard let used else { return .accentColor }
-        if used >= 100 { return .red }
-        if used >= 80 { return .orange }
+    private func progressTint(remaining: Double?) -> Color {
+        guard let remaining else { return .accentColor }
+        if remaining <= 0 { return .red }
+        if remaining <= 20 { return .orange }
         return .accentColor
     }
 
     private func monthlyText(_ monthly: MonthlyQuota) -> String {
-        let used = Double(monthly.usedCents) / 100.0
+        let remaining = Double(monthly.remainingCents) / 100.0
         let limit = Double(monthly.limitCents) / 100.0
-        return String(format: "月度 $%.2f / $%.2f", used, limit)
+        if let remainingPercent = monthly.remainingPercent {
+            return String(format: "月度剩余 $%.2f / $%.2f（%.0f%%）", remaining, limit, remainingPercent)
+        }
+        return String(format: "月度剩余 $%.2f / $%.2f", remaining, limit)
     }
 }

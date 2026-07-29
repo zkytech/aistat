@@ -15,6 +15,23 @@ final class ModelDecodingTests: XCTestCase {
         let account = try JSONDecoder().decode(AuthAccount.self, from: json)
         XCTAssertEqual(account.displayName, "fallback@example.com")
         XCTAssertEqual(account.authIndex, "a1")
+        XCTAssertEqual(account.managementName, "a1")
+    }
+
+    func testAuthAccountDecodesNameForPriorityUpdates() throws {
+        let json = """
+        {
+          "provider": "xai",
+          "email": "one@example.com",
+          "name": "one.json",
+          "auth_index": "1",
+          "status": "active"
+        }
+        """.data(using: .utf8)!
+
+        let account = try JSONDecoder().decode(AuthAccount.self, from: json)
+        XCTAssertEqual(account.name, "one.json")
+        XCTAssertEqual(account.managementName, "one.json")
     }
 
     func testAuthFilesArrayAndFilterFields() throws {
@@ -23,6 +40,7 @@ final class ModelDecodingTests: XCTestCase {
           {
             "provider": "xai",
             "email": "one@example.com",
+            "name": "one.json",
             "auth_index": "1",
             "status": "active",
             "unavailable": false,
@@ -39,6 +57,7 @@ final class ModelDecodingTests: XCTestCase {
         let response = try JSONDecoder().decode(AuthFilesResponse.self, from: json)
         XCTAssertEqual(response.accounts.count, 2)
         XCTAssertEqual(response.accounts[0].email, "one@example.com")
+        XCTAssertEqual(response.accounts[0].name, "one.json")
     }
 
     func testWeeklyBodyObject() throws {
@@ -65,6 +84,7 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(weekly.remainingPercent, 33.5)
         XCTAssertEqual(weekly.productUsage.count, 1)
         XCTAssertEqual(weekly.productUsage[0].usagePercent, 70)
+        XCTAssertEqual(weekly.productUsage[0].remainingPercent, 30)
         XCTAssertNotNil(weekly.periodStart)
         XCTAssertNotNil(weekly.periodEnd)
     }
@@ -96,13 +116,15 @@ final class ModelDecodingTests: XCTestCase {
         let response = try JSONDecoder().decode(APIProxyResponse.self, from: json)
         let weekly = response.body.config.weeklyQuota
         XCTAssertEqual(weekly.usedPercent, 68)
+        XCTAssertEqual(weekly.remainingPercent, 32)
         XCTAssertEqual(weekly.productUsage.count, 2)
         XCTAssertEqual(weekly.productUsage[0].usagePercent, 68)
+        XCTAssertEqual(weekly.productUsage[0].remainingPercent, 32)
         XCTAssertNil(weekly.productUsage[1].usagePercent)
         XCTAssertNotNil(weekly.periodEnd)
     }
 
-    func testMonthlyQuota() throws {
+    func testMonthlyQuotaRemaining() throws {
         let json = """
         {
           "body": {
@@ -114,7 +136,63 @@ final class ModelDecodingTests: XCTestCase {
         }
         """.data(using: .utf8)!
         let response = try JSONDecoder().decode(APIProxyResponse.self, from: json)
-        XCTAssertEqual(response.body.config.monthlyQuota?.limitCents, 2000)
-        XCTAssertEqual(response.body.config.monthlyQuota?.usedCents, 450)
+        let monthly = try XCTUnwrap(response.body.config.monthlyQuota)
+        XCTAssertEqual(monthly.limitCents, 2000)
+        XCTAssertEqual(monthly.usedCents, 450)
+        XCTAssertEqual(monthly.remainingCents, 1550)
+        XCTAssertEqual(monthly.remainingPercent, 77.5)
+    }
+
+    func testDisplayDateFormatterUsesLocalWallClockFormat() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        let components = DateComponents(calendar: calendar, timeZone: calendar.timeZone, year: 2026, month: 7, day: 29, hour: 12, minute: 1, second: 0)
+        let date = calendar.date(from: components)!
+
+        // Force formatter path with a temporary local timezone by constructing expected string from current TZ offset.
+        // DisplayDateFormatter uses TimeZone.current; assert format shape and reconstructed components.
+        let formatted = DisplayDateFormatter.string(from: date)
+        let regex = try! NSRegularExpression(pattern: #"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"#)
+        let range = NSRange(location: 0, length: formatted.utf16.count)
+        XCTAssertNotNil(regex.firstMatch(in: formatted, range: range))
+        XCTAssertEqual(formatted.count, 19)
+    }
+
+    func testAccountQuotaSorterOrdersByAbsoluteDistanceToRefresh() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let items = [
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "far@x.ai", name: "far.json", authIndex: "far"),
+                weekly: WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: now.addingTimeInterval(10_000), productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "near@x.ai", name: "near.json", authIndex: "near"),
+                weekly: WeeklyQuota(usedPercent: 20, periodStart: nil, periodEnd: now.addingTimeInterval(100), productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "expired@x.ai", name: "expired.json", authIndex: "expired"),
+                weekly: WeeklyQuota(usedPercent: 30, periodStart: nil, periodEnd: now.addingTimeInterval(-50), productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "missing@x.ai", name: "missing.json", authIndex: "missing"),
+                weekly: WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: nil, productUsage: [])
+            )
+        ]
+
+        let sorted = AccountQuotaSorter.sortByRefreshProximity(items, now: now)
+        XCTAssertEqual(sorted.map(\.account.authIndex), ["expired", "near", "far", "missing"])
+
+        let priorities = AccountQuotaSorter.prioritiesByProximity(items, now: now)
+        XCTAssertEqual(priorities.map(\.name), ["expired.json", "near.json", "far.json", "missing.json"])
+        XCTAssertEqual(priorities.map(\.priority), [4, 3, 2, 1])
+    }
+
+    func testRemainingPercentBoundaries() {
+        XCTAssertEqual(WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent, 100)
+        XCTAssertEqual(WeeklyQuota(usedPercent: 100, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent, 0)
+        XCTAssertEqual(WeeklyQuota(usedPercent: 34, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent, 66)
+        XCTAssertNil(WeeklyQuota(usedPercent: nil, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent)
+        XCTAssertTrue(WeeklyQuota(usedPercent: 100, periodStart: nil, periodEnd: nil, productUsage: []).isExhausted)
+        XCTAssertFalse(WeeklyQuota(usedPercent: 99, periodStart: nil, periodEnd: nil, productUsage: []).isExhausted)
     }
 }

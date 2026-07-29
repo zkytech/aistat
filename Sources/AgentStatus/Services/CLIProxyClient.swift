@@ -4,6 +4,7 @@ protocol CLIProxyClientProtocol: Sendable {
     func fetchXAIAccounts() async throws -> [AuthAccount]
     func fetchWeeklyQuota(authIndex: String) async throws -> WeeklyQuota
     func fetchMonthlyQuota(authIndex: String) async throws -> MonthlyQuota?
+    func updateAuthPriorities(_ priorities: [(name: String, priority: Int)]) async throws
 }
 
 enum CLIProxyClientError: LocalizedError, Equatable {
@@ -91,6 +92,36 @@ struct CLIProxyClient: CLIProxyClientProtocol {
         }
     }
 
+    func updateAuthPriorities(_ priorities: [(name: String, priority: Int)]) async throws {
+        guard !priorities.isEmpty else { return }
+
+        var failures: [String] = []
+        for item in priorities {
+            let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+
+            let payload: [String: Any] = [
+                "name": name,
+                "priority": item.priority
+            ]
+            do {
+                let body = try JSONSerialization.data(withJSONObject: payload, options: [])
+                let request = try makeManagementRequest(
+                    path: "/v0/management/auth-files/fields",
+                    method: "PATCH",
+                    body: body
+                )
+                _ = try await perform(request)
+            } catch {
+                failures.append("\(name): \(error.localizedDescription)")
+            }
+        }
+
+        if !failures.isEmpty {
+            throw CLIProxyClientError.httpStatus(207, failures.joined(separator: "; "))
+        }
+    }
+
     private func makeAPICallBody(authIndex: String, url: String) throws -> Data {
         let payload: [String: Any] = [
             "authIndex": authIndex,
@@ -158,7 +189,11 @@ struct CLIProxyClient: CLIProxyClientProtocol {
             throw CLIProxyClientError.httpStatus(http.statusCode, message.map(String.init) ?? "unknown error")
         }
 
-        guard !data.isEmpty else {
+        // PATCH field updates may return an empty body with 200.
+        if data.isEmpty {
+            if request.httpMethod?.uppercased() == "PATCH" {
+                return Data("{}".utf8)
+            }
             throw CLIProxyClientError.emptyResponse
         }
         return data

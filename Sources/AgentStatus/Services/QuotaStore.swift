@@ -1,11 +1,15 @@
 import Foundation
 import Combine
+import AppKit
 
 @MainActor
 final class QuotaStore: ObservableObject {
+    static let minimumRefreshInterval: TimeInterval = TimeInterval(AppConfiguration.minimumRefreshIntervalSeconds)
+
     @Published private(set) var accounts: [AccountQuota] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshAt: Date?
+    @Published private(set) var nextRefreshAvailableAt: Date?
     @Published private(set) var globalError: String?
     @Published private(set) var configuration: AppConfiguration
     @Published private(set) var menuTitle: String = "Grok --"
@@ -13,18 +17,26 @@ final class QuotaStore: ObservableObject {
     private var clientFactory: (AppConfiguration) -> any CLIProxyClientProtocol
     private var refreshTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
-    private var lastManualRefreshAt: Date?
-    private let manualDebounceInterval: TimeInterval = 1.5
+    private var lastRefreshAttemptAt: Date?
     private let includeMonthly: Bool
+    private let nowProvider: () -> Date
+
+    var canManualRefresh: Bool {
+        guard !isRefreshing else { return false }
+        guard let nextRefreshAvailableAt else { return true }
+        return nowProvider() >= nextRefreshAvailableAt
+    }
 
     init(
         configuration: AppConfiguration = AppConfigurationStore.load(),
         includeMonthly: Bool = true,
-        clientFactory: @escaping (AppConfiguration) -> any CLIProxyClientProtocol = { CLIProxyClient(configuration: $0) }
+        clientFactory: @escaping (AppConfiguration) -> any CLIProxyClientProtocol = { CLIProxyClient(configuration: $0) },
+        nowProvider: @escaping () -> Date = { Date() }
     ) {
         self.configuration = configuration
         self.includeMonthly = includeMonthly
         self.clientFactory = clientFactory
+        self.nowProvider = nowProvider
         updateMenuTitle()
     }
 
@@ -53,19 +65,27 @@ final class QuotaStore: ObservableObject {
     }
 
     func refresh(force: Bool = false) async {
-        if !force, let lastManualRefreshAt, Date().timeIntervalSince(lastManualRefreshAt) < manualDebounceInterval {
-            return
+        let now = nowProvider()
+
+        if !force {
+            if let lastRefreshAttemptAt,
+               now.timeIntervalSince(lastRefreshAttemptAt) < Self.minimumRefreshInterval {
+                nextRefreshAvailableAt = lastRefreshAttemptAt.addingTimeInterval(Self.minimumRefreshInterval)
+                return
+            }
         }
-        lastManualRefreshAt = Date()
 
         if let refreshTask {
             await refreshTask.value
             return
         }
 
+        lastRefreshAttemptAt = now
+        nextRefreshAvailableAt = now.addingTimeInterval(Self.minimumRefreshInterval)
+
         let task = Task { [weak self] in
-            await self?.performRefresh()
-            return
+            guard let self else { return }
+            await self.performRefresh()
         }
         refreshTask = task
         await task.value
@@ -85,13 +105,14 @@ final class QuotaStore: ObservableObject {
 
         let client = clientFactory(configuration)
         let shouldFetchMonthly = includeMonthly
+        let now = nowProvider()
 
         do {
             let authAccounts = try await client.fetchXAIAccounts()
             if authAccounts.isEmpty {
                 accounts = []
                 globalError = nil
-                lastRefreshAt = Date()
+                lastRefreshAt = now
                 updateMenuTitle()
                 return
             }
@@ -124,10 +145,19 @@ final class QuotaStore: ObservableObject {
                 }
             }
 
-            accounts = next
-            globalError = nil
-            lastRefreshAt = Date()
+            let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
+            accounts = sorted
+            lastRefreshAt = now
             updateMenuTitle()
+
+            let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
+            do {
+                try await client.updateAuthPriorities(priorities)
+                globalError = nil
+            } catch {
+                // Keep sorted quota data even if priority write-back fails.
+                globalError = "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
+            }
         } catch {
             // Keep previous successful account rows if list fetch fails later.
             globalError = error.localizedDescription
@@ -142,7 +172,7 @@ final class QuotaStore: ObservableObject {
             return
         }
 
-        let interval = configuration.refreshInterval
+        let interval = max(configuration.refreshInterval, Self.minimumRefreshInterval)
         autoRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))

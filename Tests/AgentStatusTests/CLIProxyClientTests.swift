@@ -23,8 +23,8 @@ final class CLIProxyClientTests: XCTestCase {
 
             let body = """
             [
-              {"provider":"xai","email":"a@x.ai","auth_index":"x1","status":"active"},
-              {"provider":"openai","email":"b@o.ai","auth_index":"o1"}
+              {"provider":"xai","email":"a@x.ai","name":"a.json","auth_index":"x1","status":"active"},
+              {"provider":"openai","email":"b@o.ai","name":"b.json","auth_index":"o1"}
             ]
             """.data(using: .utf8)!
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -34,6 +34,8 @@ final class CLIProxyClientTests: XCTestCase {
         let client = makeClient()
         let accounts = try await client.fetchXAIAccounts()
         XCTAssertEqual(accounts.map(\.authIndex), ["x1"])
+        XCTAssertEqual(accounts.first?.name, "a.json")
+        XCTAssertEqual(accounts.first?.managementName, "a.json")
         XCTAssertEqual(MockURLProtocol.requests.count, 1)
     }
 
@@ -65,6 +67,34 @@ final class CLIProxyClientTests: XCTestCase {
         let weekly = try await client.fetchWeeklyQuota(authIndex: "x1")
         XCTAssertEqual(weekly.usedPercent, 34)
         XCTAssertEqual(weekly.remainingPercent, 66)
+    }
+
+    func testUpdateAuthPrioritiesSendsPatchWithNameAndDescendingPriority() async throws {
+        var seen: [[String: Any]] = []
+        MockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://example.test/v0/management/auth-files/fields")
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+
+            let bodyData = try XCTUnwrap(request.httpBody ?? request.bodyStreamData())
+            let object = try JSONSerialization.jsonObject(with: bodyData) as! [String: Any]
+            seen.append(object)
+
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data("{}".utf8))
+        }
+
+        let client = makeClient()
+        try await client.updateAuthPriorities([
+            (name: "near.json", priority: 2),
+            (name: "far.json", priority: 1)
+        ])
+
+        XCTAssertEqual(seen.count, 2)
+        XCTAssertEqual(seen[0]["name"] as? String, "near.json")
+        XCTAssertEqual(seen[0]["priority"] as? Int, 2)
+        XCTAssertEqual(seen[1]["name"] as? String, "far.json")
+        XCTAssertEqual(seen[1]["priority"] as? Int, 1)
     }
 
     private func makeClient() -> CLIProxyClient {

@@ -28,6 +28,7 @@ ICON_NAMES=(
   "ProviderIcon-claude.png"
   "ProviderIcon-grok.png"
 )
+APP_ICON_ICNS="AppIcon.icns"
 
 usage() {
   cat <<'EOF'
@@ -160,6 +161,14 @@ for icon in "${ICON_NAMES[@]}"; do
 done
 [[ "$installed_icons" -gt 0 ]] || die "no menu bar icons found to install"
 
+# App icon (.icns) for Finder / About / Force Quit. Optional but recommended.
+if [[ -f "$SOURCE_ICON_DIR/$APP_ICON_ICNS" ]]; then
+  ditto "$SOURCE_ICON_DIR/$APP_ICON_ICNS" "$APP_RESOURCES/$APP_ICON_ICNS"
+  log "Installed app icon: $APP_ICON_ICNS"
+else
+  echo "warning: missing $APP_ICON_ICNS (app will use default generic icon)" >&2
+fi
+
 cat > "$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -171,6 +180,8 @@ cat > "$INFO_PLIST" <<PLIST
 	<string>${DISPLAY_NAME}</string>
 	<key>CFBundleExecutable</key>
 	<string>${PRODUCT_NAME}</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>${BUNDLE_ID}</string>
 	<key>CFBundleInfoDictionaryVersion</key>

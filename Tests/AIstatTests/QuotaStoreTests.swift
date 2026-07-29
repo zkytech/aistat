@@ -19,7 +19,12 @@ final class QuotaStoreTests: XCTestCase {
         )
 
         let store = QuotaStore(
-            configuration: AppConfiguration(baseURL: "https://example.test", managementKey: "k", refreshIntervalSeconds: 300),
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                refreshIntervalSeconds: 300,
+                preferNearRefreshAccounts: true
+            ),
             includeMonthly: false,
             clientFactory: { _ in client }
         )
@@ -151,7 +156,12 @@ final class QuotaStoreTests: XCTestCase {
         )
 
         let store = QuotaStore(
-            configuration: AppConfiguration(baseURL: "https://example.test", managementKey: "k", refreshIntervalSeconds: 300),
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                refreshIntervalSeconds: 300,
+                preferNearRefreshAccounts: true
+            ),
             includeMonthly: false,
             clientFactory: { _ in client },
             nowProvider: { now }
@@ -162,6 +172,42 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertEqual(store.accounts.map(\.account.authIndex), ["expired", "near", "far", "missing"])
         XCTAssertEqual(client.priorityUpdates.last?.map(\.name), ["expired.json", "near.json", "far.json", "missing.json"])
         XCTAssertEqual(client.priorityUpdates.last?.map(\.priority), [4, 3, 2, 1])
+    }
+
+    func testPreferNearRefreshDisabledKeepsOrderAndSkipsPrioritySync() async {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let near = now.addingTimeInterval(3600)
+        let far = now.addingTimeInterval(86_400)
+
+        let accounts = [
+            AuthAccount(provider: "xai", email: "far@x.ai", name: "far.json", authIndex: "far"),
+            AuthAccount(provider: "xai", email: "near@x.ai", name: "near.json", authIndex: "near")
+        ]
+        let client = FakeClient(
+            accounts: accounts,
+            weekly: [
+                "far": .success(WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: far, productUsage: [])),
+                "near": .success(WeeklyQuota(usedPercent: 20, periodStart: nil, periodEnd: near, productUsage: []))
+            ]
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                refreshIntervalSeconds: 300,
+                preferNearRefreshAccounts: false
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            nowProvider: { now }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.accounts.map(\.account.authIndex), ["far", "near"])
+        XCTAssertTrue(client.priorityUpdates.isEmpty)
+        XCTAssertNil(store.globalError)
     }
 
     func testPrioritySyncFailureDoesNotDropSortedAccounts() async {
@@ -180,7 +226,12 @@ final class QuotaStoreTests: XCTestCase {
         client.priorityError = CLIProxyClientError.httpStatus(500, "priority failed")
 
         let store = QuotaStore(
-            configuration: AppConfiguration(baseURL: "https://example.test", managementKey: "k", refreshIntervalSeconds: 300),
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                refreshIntervalSeconds: 300,
+                preferNearRefreshAccounts: true
+            ),
             includeMonthly: false,
             clientFactory: { _ in client },
             nowProvider: { now }

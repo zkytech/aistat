@@ -6,6 +6,7 @@ import SwiftUI
 @MainActor
 final class AccountDetailHoverPanelController {
     private var panel: NSPanel?
+    private var materialView: NSVisualEffectView?
     private var hostingView: NSHostingView<AccountDetailHoverPanelContent>?
     private var currentItemID: String?
     private weak var trackedAnchorWindow: NSWindow?
@@ -17,6 +18,8 @@ final class AccountDetailHoverPanelController {
     private let horizontalGap: CGFloat = 8
     private let screenInset: CGFloat = 8
     private let dismissGrace: TimeInterval = 0.18
+    /// Matches MenuBarExtra `.window` continuous corner radius on macOS 13+.
+    private let panelCornerRadius: CGFloat = 12
 
     deinit {
         for observation in anchorObservations {
@@ -48,12 +51,20 @@ final class AccountDetailHoverPanelController {
                 hostingView.rootView = content
             }
         } else {
+            let material = makeMaterialView()
             let host = NSHostingView(rootView: content)
             host.wantsLayer = true
             host.layer?.backgroundColor = NSColor.clear.cgColor
-            panel.contentView = host
+            host.autoresizingMask = [.width, .height]
+            host.frame = material.bounds
+            material.addSubview(host)
+            panel.contentView = material
+            materialView = material
             hostingView = host
         }
+
+        // Keep glass chrome in sync with the MenuBarExtra window whenever shown.
+        syncMaterialChrome(with: anchorWindow)
 
         currentItemID = item.id
         panel.layoutIfNeeded()
@@ -61,6 +72,8 @@ final class AccountDetailHoverPanelController {
 
         if !sameVisibleItem || panel.frame.size != size {
             panel.setContentSize(size)
+            hostingView?.frame = NSRect(origin: .zero, size: size)
+            materialView?.frame = NSRect(origin: .zero, size: size)
         }
 
         position(panel: panel, size: size, relativeTo: anchorWindow)
@@ -117,8 +130,66 @@ final class AccountDetailHoverPanelController {
         panel.animationBehavior = .utilityWindow
         panel.acceptsMouseMovedEvents = true
         panel.ignoresMouseEvents = false
+        // Transparent title-less window so material can blur the desktop like MenuBarExtra.
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
         self.panel = panel
         return panel
+    }
+
+    private func makeMaterialView() -> NSVisualEffectView {
+        let view = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 300, height: 320))
+        view.autoresizingMask = [.width, .height]
+        applyDefaultMaterial(to: view)
+        view.wantsLayer = true
+        view.layer?.cornerRadius = panelCornerRadius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = true
+        return view
+    }
+
+    /// Prefer the live MenuBarExtra glass settings; fall back to public popover material.
+    private func syncMaterialChrome(with anchorWindow: NSWindow?) {
+        guard let materialView else { return }
+
+        if let source = firstVisualEffectView(in: anchorWindow?.contentView) {
+            materialView.material = source.material
+            materialView.blendingMode = source.blendingMode
+            materialView.state = .active
+            materialView.isEmphasized = source.isEmphasized
+        } else {
+            applyDefaultMaterial(to: materialView)
+        }
+
+        // Match appearance (light/dark + accent vibrancy) of the main panel.
+        let appearance = anchorWindow?.effectiveAppearance
+        materialView.appearance = appearance
+        panel?.appearance = appearance
+        materialView.layer?.cornerRadius = panelCornerRadius
+        materialView.layer?.cornerCurve = .continuous
+        materialView.layer?.masksToBounds = true
+    }
+
+    private func applyDefaultMaterial(to view: NSVisualEffectView) {
+        // Closest public material to MenuBarExtra `.window` chrome when the
+        // source effect view is not yet available.
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.isEmphasized = true
+    }
+
+    private func firstVisualEffectView(in root: NSView?) -> NSVisualEffectView? {
+        guard let root else { return nil }
+        if let effect = root as? NSVisualEffectView {
+            return effect
+        }
+        for subview in root.subviews {
+            if let found = firstVisualEffectView(in: subview) {
+                return found
+            }
+        }
+        return nil
     }
 
     private func preferredSize(for hostingView: NSHostingView<AccountDetailHoverPanelContent>?) -> NSSize {

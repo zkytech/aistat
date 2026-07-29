@@ -18,7 +18,7 @@ macOS 菜单栏工具，用来查看 AI 订阅账号的额度使用情况。
 - 多账号列表：状态点、周额度进度条（以剩余为主）、重置倒计时
 - 悬停详情：周额度、月度额度、账号状态
 - 自动刷新（默认 5 分钟，最短 1 分钟）；手动刷新最短间隔 1 分钟
-- 按重置时间临近程度排序，并同步 CLIProxyAPI 账号 priority
+- 可选：优先消耗即将刷新额度的账号（默认关闭；开启后按重置时间临近程度排序，并同步 CLIProxyAPI 账号 priority）
 - 并发拉取账号数据，单账号失败不影响其他账号
 - 多数据源设置：CLIProxyAPI、Sub2API
 
@@ -72,6 +72,10 @@ cd aistat
 | CLIProxyAPI | Base URL、Management Key |
 | Sub2API | Base URL、API Key |
 
+CLIProxyAPI 专属选项：
+
+- **优先消耗即将刷新额度的账号**（默认关闭）：开启后，列表按周额度重置时间临近程度排序，并把对应 priority 写回 CLIProxyAPI，使代理优先调度即将刷新的账号。关闭时保持接口返回顺序，且不修改账号 priority。
+
 共享设置：
 
 - 自动刷新间隔（默认 300 秒，最短 60 秒）
@@ -88,6 +92,7 @@ cd aistat
 {
   "baseURL": "https://your-cliproxy-host",
   "managementKey": "<management-key>",
+  "preferNearRefreshAccounts": false,
   "refreshIntervalSeconds": 300
 }
 ```

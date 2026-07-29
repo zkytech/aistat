@@ -6,23 +6,29 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var sub2APIBaseURL: String
     var sub2APIKey: String
     var refreshIntervalSeconds: Int
+    /// When true, sort CLIProxy accounts by nearness to weekly reset and write priority so
+    /// CLIProxyAPI prefers accounts whose quota is about to refresh. Default off.
+    var preferNearRefreshAccounts: Bool
 
     init(
         baseURL: String,
         managementKey: String,
         sub2APIBaseURL: String = "",
         sub2APIKey: String = "",
-        refreshIntervalSeconds: Int
+        refreshIntervalSeconds: Int,
+        preferNearRefreshAccounts: Bool = false
     ) {
         self.baseURL = baseURL
         self.managementKey = managementKey
         self.sub2APIBaseURL = sub2APIBaseURL
         self.sub2APIKey = sub2APIKey
         self.refreshIntervalSeconds = refreshIntervalSeconds
+        self.preferNearRefreshAccounts = preferNearRefreshAccounts
     }
 
     private enum CodingKeys: String, CodingKey {
         case baseURL, managementKey, sub2APIBaseURL, sub2APIKey, refreshIntervalSeconds
+        case preferNearRefreshAccounts
     }
 
     init(from decoder: Decoder) throws {
@@ -33,6 +39,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         sub2APIKey = try container.decodeIfPresent(String.self, forKey: .sub2APIKey) ?? ""
         refreshIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalSeconds)
             ?? Self.defaultRefreshIntervalSeconds
+        preferNearRefreshAccounts = try container.decodeIfPresent(Bool.self, forKey: .preferNearRefreshAccounts) ?? false
     }
 
     static let defaultRefreshIntervalSeconds = 300

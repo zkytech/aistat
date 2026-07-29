@@ -169,18 +169,25 @@ final class QuotaStore: ObservableObject {
                         }
                     }
 
-                    let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
-                    accounts = sorted
-                    lastRefreshAt = now
-                    updateMenuTitle()
+                    if configuration.preferNearRefreshAccounts {
+                        let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
+                        accounts = sorted
+                        lastRefreshAt = now
+                        updateMenuTitle()
 
-                    let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
-                    do {
-                        try await client.updateAuthPriorities(priorities)
+                        let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
+                        do {
+                            try await client.updateAuthPriorities(priorities)
+                            globalError = nil
+                        } catch {
+                            // Keep sorted quota data even if priority write-back fails.
+                            globalError = "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
+                        }
+                    } else {
+                        accounts = next
+                        lastRefreshAt = now
+                        updateMenuTitle()
                         globalError = nil
-                    } catch {
-                        // Keep sorted quota data even if priority write-back fails.
-                        globalError = "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
                     }
                 }
             } catch {

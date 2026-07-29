@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct AccountQuotaRow: View {
@@ -199,7 +198,8 @@ struct AccountQuotaDetailView: View {
     }
 
     var body: some View {
-        // Match MenuBarContentView layout + MenuBarExtra frosted material.
+        // Content only — frosted chrome is applied at the NSPanel level so it
+        // matches MenuBarExtra `.window` glass (see AccountDetailHoverPanel).
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
@@ -207,10 +207,6 @@ struct AccountQuotaDetailView: View {
         }
         .padding(.vertical, 8)
         .frame(width: 300)
-        .background {
-            MenuBarStyleMaterialBackground()
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.account.displayName) 账号详情")
     }
@@ -407,26 +403,6 @@ struct AccountQuotaDetailView: View {
             return nil
         }
         return value
-    }
-}
-
-/// Frosted material matching MenuBarExtra `.window` chrome for floating panels.
-struct MenuBarStyleMaterialBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        // `.popover` is the closest public material to MenuBarExtra window glass.
-        view.material = .popover
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.isEmphasized = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = .popover
-        nsView.blendingMode = .behindWindow
-        nsView.state = .active
-        nsView.isEmphasized = true
     }
 }
 

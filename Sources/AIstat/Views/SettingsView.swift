@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private enum SettingsPlatform: String, CaseIterable, Identifiable {
@@ -29,11 +30,55 @@ private enum SettingsPlatform: String, CaseIterable, Identifiable {
         }
     }
 
-    var systemImage: String {
+    /// Resource name under `Resources/PlatformIcon-*.png` (official brand marks).
+    var iconResourceName: String {
+        "PlatformIcon-\(rawValue)"
+    }
+
+    var fallbackSystemImage: String {
         switch self {
         case .cliproxyapi: return "server.rack"
         case .sub2api: return "arrow.triangle.2.circlepath.circle"
         }
+    }
+}
+
+/// Colored brand icon for settings data sources (CLIProxyAPI / Sub2API).
+private struct PlatformIconView: View {
+    let platform: SettingsPlatform
+    var size: CGFloat = 22
+    var cornerRadius: CGFloat? = nil
+
+    var body: some View {
+        Group {
+            if let image = Self.loadImage(named: platform.iconResourceName, pointSize: size) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Image(systemName: platform.fallbackSystemImage)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(size * 0.18)
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
+        .accessibilityHidden(true)
+    }
+
+    private var resolvedCornerRadius: CGFloat {
+        cornerRadius ?? size * 0.22
+    }
+
+    private static func loadImage(named name: String, pointSize: CGFloat) -> NSImage? {
+        let url = Bundle.main.url(forResource: name, withExtension: "png")
+            ?? Bundle.module.url(forResource: name, withExtension: "png")
+        guard let url, let image = NSImage(contentsOf: url) else { return nil }
+        image.size = NSSize(width: pointSize, height: pointSize)
+        return image
     }
 }
 
@@ -46,6 +91,7 @@ struct SettingsView: View {
     @State private var sub2APIBaseURL: String = ""
     @State private var sub2APIKey: String = ""
     @State private var refreshIntervalSeconds: Int = AppConfiguration.defaultRefreshIntervalSeconds
+    @State private var preferNearRefreshAccounts: Bool = false
     @State private var statusMessage: String?
     @State private var isError = false
     @State private var isSaving = false
@@ -83,10 +129,7 @@ struct SettingsView: View {
                         selectedPlatform = platform
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: platform.systemImage)
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(selectedPlatform == platform ? Color.accentColor : .secondary)
-                                .frame(width: 22)
+                            PlatformIconView(platform: platform, size: 28)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(platform.title)
@@ -153,11 +196,7 @@ struct SettingsView: View {
 
     private var detailHeader: some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: selectedPlatform.systemImage)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 44, height: 44)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            PlatformIconView(platform: selectedPlatform, size: 44, cornerRadius: 10)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
@@ -197,6 +236,17 @@ struct SettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("CLIProxyAPI Management Key")
                 }
+                Toggle(isOn: $preferNearRefreshAccounts) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("优先消耗即将刷新额度的账号")
+                        Text("开启后按周额度重置时间排序，并同步 CLIProxyAPI 账号 priority。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+                .accessibilityLabel("优先消耗即将刷新额度的账号")
             case .sub2api:
                 settingsField("Base URL", hint: "Sub2API 服务地址") {
                     TextField("https://aihub.top", text: $sub2APIBaseURL)
@@ -364,6 +414,7 @@ struct SettingsView: View {
         sub2APIBaseURL = store.configuration.sub2APIBaseURL
         sub2APIKey = store.configuration.sub2APIKey
         refreshIntervalSeconds = max(store.configuration.refreshIntervalSeconds, minimumRefreshSeconds)
+        preferNearRefreshAccounts = store.configuration.preferNearRefreshAccounts
     }
 
     private func reloadFromDisk() {
@@ -382,12 +433,14 @@ struct SettingsView: View {
             managementKey: managementKey,
             sub2APIBaseURL: sub2APIBaseURL,
             sub2APIKey: sub2APIKey,
-            refreshIntervalSeconds: max(refreshIntervalSeconds, minimumRefreshSeconds)
+            refreshIntervalSeconds: max(refreshIntervalSeconds, minimumRefreshSeconds),
+            preferNearRefreshAccounts: preferNearRefreshAccounts
         )
 
         do {
             try store.updateConfiguration(configuration)
             refreshIntervalSeconds = configuration.refreshIntervalSeconds
+            preferNearRefreshAccounts = configuration.preferNearRefreshAccounts
             statusMessage = "已保存到 Application Support 并开始刷新"
             isError = false
         } catch {

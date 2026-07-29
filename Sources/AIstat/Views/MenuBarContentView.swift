@@ -86,7 +86,7 @@ struct MenuBarContentView: View {
                 }
             } else if store.configuration.isConfigured {
                 if store.accounts.isEmpty {
-                    Text(store.isRefreshing ? "正在加载账号…" : "暂无 xAI 账号")
+                    Text(store.isRefreshing ? "正在加载账号…" : "暂无 OpenAI / Claude / Grok 账号")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 4)
@@ -112,7 +112,7 @@ struct MenuBarContentView: View {
                             if item.id != store.accounts.last?.id {
                                 Divider()
                                     .opacity(0.45)
-                                    .padding(.leading, 20)
+                                    .padding(.leading, 36)
                             }
                         }
                     }
@@ -229,11 +229,11 @@ struct MenuBarContentView: View {
 
     private func openSettingsWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: AgentStatusApp.settingsWindowID)
+        openWindow(id: AIstatApp.settingsWindowID)
 
         // MenuBarExtra can leave the new window behind; force key/front after open.
         DispatchQueue.main.async {
-            for window in NSApp.windows where window.title == "设置" || window.identifier?.rawValue == AgentStatusApp.settingsWindowID {
+            for window in NSApp.windows where window.title == "设置" || window.identifier?.rawValue == AIstatApp.settingsWindowID {
                 window.makeKeyAndOrderFront(nil)
             }
         }

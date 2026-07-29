@@ -87,7 +87,7 @@ enum AppConfigurationStore {
     static var applicationSupportDirectory: URL {
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return root.appendingPathComponent("agent-status", isDirectory: true)
+        return root.appendingPathComponent("aistat", isDirectory: true)
     }
 
     static func load() -> AppConfiguration {

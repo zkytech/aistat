@@ -2,25 +2,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "agent-status",
+    name: "aistat",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "agent-status", targets: ["AgentStatus"])
+        .executable(name: "aistat", targets: ["AIstat"])
     ],
     targets: [
         .executableTarget(
-            name: "AgentStatus",
-            path: "Sources/AgentStatus",
+            name: "AIstat",
+            path: "Sources/AIstat",
             resources: [
                 .process("Resources")
             ]
         ),
         .testTarget(
-            name: "AgentStatusTests",
-            dependencies: ["AgentStatus"],
-            path: "Tests/AgentStatusTests"
+            name: "AIstatTests",
+            dependencies: ["AIstat"],
+            path: "Tests/AIstatTests"
         )
     ]
 )

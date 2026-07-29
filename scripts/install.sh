@@ -4,19 +4,19 @@
 # Usage:
 #   ./scripts/install.sh              # build, install, launch
 #   ./scripts/install.sh --no-launch  # build + install only
-#   ./scripts/install.sh --app-path "$HOME/Applications/Agent Status.app"
+#   ./scripts/install.sh --app-path "$HOME/Applications/AIstat.app"
 #   ./scripts/install.sh --debug
 #
 # Layout (codesign-compatible):
-#   Agent Status.app/
+#   AIstat.app/
 #     Contents/
 #       Info.plist
-#       MacOS/agent-status
+#       MacOS/aistat
 #       Resources/
 #         MenuBarIconTemplate.png
 #         MenuBarIconTemplate@2x.png
 #
-# Note: SPM's Bundle.module looks at `.app/agent-status_AgentStatus.bundle`,
+# Note: SPM's Bundle.module looks at `.app/aistat_AIstat.bundle`,
 # but codesign forbids unsealed files at the .app root. The app therefore loads
 # icons via Bundle.main first (packaged install) and falls back to Bundle.module
 # for `swift run` / local .build launches.
@@ -24,18 +24,21 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_PATH="${HOME}/Applications/Agent Status.app"
+APP_PATH="${HOME}/Applications/AIstat.app"
 DO_LAUNCH=1
 CONFIGURATION=release
-PRODUCT_NAME="agent-status"
-BUNDLE_ID="org.agent-status.app"
-DISPLAY_NAME="Agent Status"
+PRODUCT_NAME="aistat"
+BUNDLE_ID="app.aistat"
+DISPLAY_NAME="AIstat"
 VERSION="0.1.0"
 BUILD_NUMBER="1"
-RESOURCE_BUNDLE_NAME="agent-status_AgentStatus.bundle"
+RESOURCE_BUNDLE_NAME="aistat_AIstat.bundle"
 ICON_NAMES=(
   "MenuBarIconTemplate.png"
   "MenuBarIconTemplate@2x.png"
+  "ProviderIcon-openai.png"
+  "ProviderIcon-claude.png"
+  "ProviderIcon-grok.png"
 )
 
 usage() {
@@ -43,7 +46,7 @@ usage() {
 Usage: scripts/install.sh [options]
 
 Options:
-  --app-path <path>   Install destination (default: ~/Applications/Agent Status.app)
+  --app-path <path>   Install destination (default: ~/Applications/AIstat.app)
   --no-launch         Install without launching
   --debug             Build/install the debug binary instead of release
   -h, --help          Show this help
@@ -129,7 +132,7 @@ if [[ -z "$BUNDLE_SRC" ]]; then
   BUNDLE_SRC="$(find "$ROOT/.build" -type d -name "$RESOURCE_BUNDLE_NAME" -path "*/$CONFIGURATION/*" | head -n 1 || true)"
 fi
 
-SOURCE_ICON_DIR="$ROOT/Sources/AgentStatus/Resources"
+SOURCE_ICON_DIR="$ROOT/Sources/AIstat/Resources"
 
 log "Stopping existing instances"
 pkill -f "$APP_PATH/Contents/MacOS/$PRODUCT_NAME" 2>/dev/null || true

@@ -14,7 +14,7 @@ final class QuotaStore: ObservableObject {
     @Published private(set) var nextRefreshAvailableAt: Date?
     @Published private(set) var globalError: String?
     @Published private(set) var configuration: AppConfiguration
-    @Published private(set) var menuTitle: String = "Grok --"
+    @Published private(set) var menuTitle: String = "额度 --"
 
     private var clientFactory: (AppConfiguration) -> any CLIProxyClientProtocol
     private var sub2APIClientFactory: (AppConfiguration) -> any Sub2APIClientProtocol
@@ -134,7 +134,7 @@ final class QuotaStore: ObservableObject {
 
         if hasCLIProxy {
             do {
-                let authAccounts = try await client.fetchXAIAccounts()
+                let authAccounts = try await client.fetchAccounts()
                 if authAccounts.isEmpty {
                     accounts = []
                     lastRefreshAt = now
@@ -147,13 +147,13 @@ final class QuotaStore: ObservableObject {
 
                     await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, String?).self) { group in
                         for (index, item) in next.enumerated() {
-                            let authIndex = item.account.authIndex
+                            let account = item.account
                             group.addTask {
                                 do {
-                                    let weekly = try await client.fetchWeeklyQuota(authIndex: authIndex)
+                                    let weekly = try await client.fetchWeeklyQuota(for: account)
                                     var monthly: MonthlyQuota?
                                     if shouldFetchMonthly {
-                                        monthly = try? await client.fetchMonthlyQuota(authIndex: authIndex)
+                                        monthly = try? await client.fetchMonthlyQuota(for: account)
                                     }
                                     return (index, weekly.fillingMissingUsage(from: monthly), monthly, nil)
                                 } catch {
@@ -233,11 +233,11 @@ final class QuotaStore: ObservableObject {
         }
 
         if let lowestRemaining = remainingCandidates.min() {
-            menuTitle = String(format: "Grok %.0f%%", lowestRemaining)
+            menuTitle = String(format: "额度 %.0f%%", lowestRemaining)
         } else if accounts.contains(where: { $0.errorMessage != nil }) {
-            menuTitle = "Grok !!"
+            menuTitle = "额度 !!"
         } else {
-            menuTitle = "Grok --"
+            menuTitle = "额度 --"
         }
     }
 }

@@ -1,5 +1,5 @@
 import XCTest
-@testable import AgentStatus
+@testable import AIstat
 
 final class ModelDecodingTests: XCTestCase {
     func testAuthAccountDisplayNameFallback() throws {
@@ -142,6 +142,51 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(weekly.productUsage[0].remainingPercent, 32)
         XCTAssertNil(weekly.productUsage[1].usagePercent)
         XCTAssertNotNil(weekly.periodEnd)
+    }
+
+    func testCodexUsageResponsePicksTightestWindow() throws {
+        let json = """
+        {
+          "plan_type": "plus",
+          "rate_limit": {
+            "primary_window": {"used_percent": 10, "limit_window_seconds": 18000, "reset_at": 100},
+            "secondary_window": {"used_percent": 90, "limit_window_seconds": 604800, "reset_at": 200}
+          }
+        }
+        """.data(using: .utf8)!
+
+        let usage = try JSONDecoder().decode(CodexUsageResponse.self, from: json)
+        let weekly = usage.asWeeklyQuota()
+        XCTAssertEqual(weekly.usedPercent, 90)
+        XCTAssertEqual(weekly.remainingPercent, 10)
+        XCTAssertEqual(weekly.periodEnd, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(weekly.productUsage.map(\.product), ["5 小时限额", "周限额"])
+    }
+
+    func testClaudeUsageResponseParsesWindows() throws {
+        let json = """
+        {
+          "five_hour": {"utilization": "12.5", "resets_at": "2026-07-29T10:00:00Z"},
+          "seven_day": {"utilization": 40, "resets_at": "2026-08-01T00:00:00Z"},
+          "seven_day_opus": {"utilization": 5, "resets_at": "2026-08-01T00:00:00Z"}
+        }
+        """.data(using: .utf8)!
+
+        let usage = try JSONDecoder().decode(ClaudeUsageResponse.self, from: json)
+        let weekly = usage.asWeeklyQuota()
+        XCTAssertEqual(weekly.usedPercent, 40)
+        XCTAssertEqual(weekly.remainingPercent, 60)
+        XCTAssertEqual(weekly.productUsage.count, 3)
+        XCTAssertEqual(weekly.productUsage.map(\.product), ["5 小时限额", "7 天限额", "7 天 Opus"])
+    }
+
+    func testSubscriptionProviderResolve() {
+        XCTAssertEqual(SubscriptionProvider.resolve(from: "xai"), .grok)
+        XCTAssertEqual(SubscriptionProvider.resolve(from: "CODEX"), .openai)
+        XCTAssertEqual(SubscriptionProvider.resolve(from: "openai"), .openai)
+        XCTAssertEqual(SubscriptionProvider.resolve(from: "anthropic"), .claude)
+        XCTAssertEqual(SubscriptionProvider.resolve(from: "claude"), .claude)
+        XCTAssertNil(SubscriptionProvider.resolve(from: "gemini"))
     }
 
     func testMonthlyQuotaRemaining() throws {

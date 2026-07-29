@@ -68,7 +68,7 @@ jobs:
 
           ## Install
           1. Download and unzip
-          2. Move \`Agent Status.app\` to \`~/Applications\` (or anywhere)
+          2. Move \`AIstat.app\` to \`~/Applications\` (or anywhere)
           3. Open the app (right-click → Open on first launch if Gatekeeper blocks ad-hoc signature)
           " \
             "$ZIP"

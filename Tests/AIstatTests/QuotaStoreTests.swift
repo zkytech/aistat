@@ -1,5 +1,5 @@
 import XCTest
-@testable import AgentStatus
+@testable import AIstat
 
 @MainActor
 final class QuotaStoreTests: XCTestCase {
@@ -27,7 +27,7 @@ final class QuotaStoreTests: XCTestCase {
         await store.refresh(force: true)
 
         XCTAssertEqual(store.accounts.count, 3)
-        XCTAssertEqual(store.menuTitle, "Grok 20%")
+        XCTAssertEqual(store.menuTitle, "额度 20%")
         XCTAssertNil(store.globalError)
         XCTAssertEqual(client.priorityUpdates.count, 1)
         XCTAssertEqual(client.priorityUpdates[0].map(\.name), ["fail.json", "ok.json", "tight.json"])
@@ -316,7 +316,7 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertEqual(item.monthly?.limitCents, 15_000)
         XCTAssertEqual(item.monthly?.usedCents, 5_336)
         XCTAssertNil(item.errorMessage)
-        XCTAssertEqual(store.menuTitle, "Grok 64%")
+        XCTAssertEqual(store.menuTitle, "额度 64%")
     }
 
     func testExistingWeeklyPercentIsNotOverriddenByMonthly() async {
@@ -343,7 +343,7 @@ final class QuotaStoreTests: XCTestCase {
 
         XCTAssertEqual(store.accounts.first?.weekly?.usedPercent, 20)
         XCTAssertEqual(store.accounts.first?.weekly?.remainingPercent, 80)
-        XCTAssertEqual(store.menuTitle, "Grok 80%")
+        XCTAssertEqual(store.menuTitle, "额度 80%")
     }
 }
 
@@ -367,14 +367,14 @@ private final class FakeClient: CLIProxyClientProtocol, @unchecked Sendable {
         self.monthly = monthly
     }
 
-    func fetchXAIAccounts() async throws -> [AuthAccount] {
+    func fetchAccounts() async throws -> [AuthAccount] {
         fetchAccountsCount += 1
         if let accountsError { throw accountsError }
         return accounts
     }
 
-    func fetchWeeklyQuota(authIndex: String) async throws -> WeeklyQuota {
-        switch weekly[authIndex] {
+    func fetchWeeklyQuota(for account: AuthAccount) async throws -> WeeklyQuota {
+        switch weekly[account.authIndex] {
         case .success(let value):
             return value
         case .failure(let error):
@@ -384,8 +384,8 @@ private final class FakeClient: CLIProxyClientProtocol, @unchecked Sendable {
         }
     }
 
-    func fetchMonthlyQuota(authIndex: String) async throws -> MonthlyQuota? {
-        switch monthly[authIndex] {
+    func fetchMonthlyQuota(for account: AuthAccount) async throws -> MonthlyQuota? {
+        switch monthly[account.authIndex] {
         case .success(let value):
             return value
         case .failure(let error):

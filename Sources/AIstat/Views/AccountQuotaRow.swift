@@ -8,6 +8,8 @@ struct AccountQuotaRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
+            providerIcon
+
             statusIndicator
                 .accessibilityLabel(statusAccessibilityLabel)
 
@@ -74,6 +76,20 @@ struct AccountQuotaRow: View {
         return .accentColor
     }
 
+    @ViewBuilder
+    private var providerIcon: some View {
+        if let provider = SubscriptionProvider.resolve(from: item.account.provider) {
+            ProviderIconView(provider: provider, size: 14)
+                .frame(width: 16, height: 16)
+        } else {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+                .accessibilityLabel("未知订阅类型")
+        }
+    }
+
     private var statusIndicator: some View {
         Image(systemName: statusSymbolName)
             .font(.system(size: 10, weight: .bold))
@@ -136,7 +152,9 @@ struct AccountQuotaRow: View {
     }
 
     private var accessibilitySummary: String {
-        "\(item.account.displayName)，剩余 \(remainingText)，\(resetCountdownText)，状态 \(statusText)"
+        let providerName = SubscriptionProvider.resolve(from: item.account.provider)?.displayName
+            ?? item.account.provider
+        return "\(providerName) \(item.account.displayName)，剩余 \(remainingText)，\(resetCountdownText)，状态 \(statusText)"
     }
 
     private var detailHelpText: String {
@@ -199,6 +217,11 @@ struct AccountQuotaDetailView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
+            if let provider = SubscriptionProvider.resolve(from: item.account.provider) {
+                ProviderIconView(provider: provider, size: 14)
+                    .frame(width: 16, height: 16)
+            }
+
             Image(systemName: statusSymbolName)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(statusColor)

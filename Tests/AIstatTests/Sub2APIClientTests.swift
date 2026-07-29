@@ -1,5 +1,5 @@
 import XCTest
-@testable import AgentStatus
+@testable import AIstat
 
 final class Sub2APIClientTests: XCTestCase {
     override func setUp() {

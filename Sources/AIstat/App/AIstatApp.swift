@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct AgentStatusApp: App {
+struct AIstatApp: App {
     static let settingsWindowID = "settings"
 
     @StateObject private var store = QuotaStore()
@@ -36,7 +36,7 @@ struct AgentStatusApp: App {
     private static let menuBarIcon: NSImage = {
         let fallback = NSImage(
             systemSymbolName: "chart.bar.fill",
-            accessibilityDescription: "Agent Status"
+            accessibilityDescription: "AIstat"
         ) ?? NSImage()
 
         // Prefer the 36px asset displayed at 18pt as a template image.

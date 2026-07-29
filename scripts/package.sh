@@ -4,10 +4,10 @@
 # Usage:
 #   ./scripts/package.sh
 #   ./scripts/package.sh --out dist
-#   ./scripts/package.sh --app-name "Agent Status"
+#   ./scripts/package.sh --app-name "AIstat"
 #
 # Outputs (default under ./dist):
-#   dist/Agent Status.app
+#   dist/AIstat.app
 #   dist/Agent-Status-macos-arm64.zip
 
 set -euo pipefail
@@ -15,15 +15,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$ROOT/dist"
 CONFIGURATION=release
-PRODUCT_NAME="agent-status"
-BUNDLE_ID="org.agent-status.app"
-DISPLAY_NAME="Agent Status"
+PRODUCT_NAME="aistat"
+BUNDLE_ID="app.aistat"
+DISPLAY_NAME="AIstat"
 VERSION="0.1.0"
 BUILD_NUMBER="1"
-RESOURCE_BUNDLE_NAME="agent-status_AgentStatus.bundle"
+RESOURCE_BUNDLE_NAME="aistat_AIstat.bundle"
 ICON_NAMES=(
   "MenuBarIconTemplate.png"
   "MenuBarIconTemplate@2x.png"
+  "ProviderIcon-openai.png"
+  "ProviderIcon-claude.png"
+  "ProviderIcon-grok.png"
 )
 
 usage() {
@@ -32,7 +35,7 @@ Usage: scripts/package.sh [options]
 
 Options:
   --out <dir>         Output directory (default: ./dist)
-  --app-name <name>   Display / bundle folder name (default: Agent Status)
+  --app-name <name>   Display / bundle folder name (default: AIstat)
   --debug             Build the debug binary instead of release
   -h, --help          Show this help
 EOF
@@ -126,7 +129,7 @@ if [[ -z "$BUNDLE_SRC" ]]; then
   BUNDLE_SRC="$(find "$ROOT/.build" -type d -name "$RESOURCE_BUNDLE_NAME" -path "*/$CONFIGURATION/*" | head -n 1 || true)"
 fi
 
-SOURCE_ICON_DIR="$ROOT/Sources/AgentStatus/Resources"
+SOURCE_ICON_DIR="$ROOT/Sources/AIstat/Resources"
 
 log "Assembling app bundle at: $APP_PATH"
 rm -rf "$APP_PATH"

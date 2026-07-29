@@ -1,6 +1,6 @@
-# agent-status
+# aistat
 
-macOS menu bar quota viewer for AI subscription accounts via CLIProxyAPI.
+macOS menu bar quota viewer for AI subscription accounts via CLIProxyAPI / Sub2API.
 
 ## Stack
 

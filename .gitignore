@@ -8,3 +8,8 @@ Config.local.plist
 .env.*
 *.pem
 DerivedData/
+.build/
+.swiftpm/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+config.local.json

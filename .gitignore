@@ -1,0 +1,10 @@
+.DS_Store
+.derivedData/
+build/
+*.xcuserstate
+xcuserdata/
+Config.local.plist
+.env
+.env.*
+*.pem
+DerivedData/

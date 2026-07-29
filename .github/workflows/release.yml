@@ -1,0 +1,74 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    name: Package macOS app & publish release
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          uname -m
+
+      - name: Test
+        run: swift test
+
+      - name: Package .app
+        run: |
+          chmod +x scripts/package.sh
+          ./scripts/package.sh --out dist
+
+      - name: Compute release identity (Asia/Shanghai)
+        id: meta
+        run: |
+          export TZ=Asia/Shanghai
+          # Release title: yyyyMMdd HH:mm:ss
+          NAME="$(date +'%Y%m%d %H:%M:%S')"
+          # Git tag cannot contain spaces
+          TAG="v$(date +'%Y%m%d-%H%M%S')"
+          {
+            echo "name=$NAME"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release name: $NAME"
+          echo "Release tag:  $TAG"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP="$(ls dist/*-macos-arm64.zip | head -n 1)"
+          test -f "$ZIP"
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --title "${{ steps.meta.outputs.name }}" \
+            --notes "Automated build from \`${{ github.sha }}\` on \`${{ github.ref_name }}\`.
+
+          ## Assets
+          - macOS arm64 app bundle (ad-hoc signed): \`$(basename "$ZIP")\`
+
+          ## Install
+          1. Download and unzip
+          2. Move \`Agent Status.app\` to \`~/Applications\` (or anywhere)
+          3. Open the app (right-click → Open on first launch if Gatekeeper blocks ad-hoc signature)
+          " \
+            "$ZIP"

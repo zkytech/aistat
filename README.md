@@ -45,12 +45,20 @@ swift run agent-status
 ./scripts/install.sh --debug
 ```
 
+仅打包（生成 `.app` 与 zip，不安装/启动）：
+
+```bash
+./scripts/package.sh
+# 输出: dist/Agent Status.app  与  dist/Agent-Status-macos-arm64.zip
+```
+
 说明：
 
 - 脚本会 `swift build -c release`，安装可执行文件与菜单栏图标
 - 图标安装到 `Contents/Resources/*.png`（`Bundle.main`，可 codesign）
 - `swift run` 仍走 SPM `Bundle.module` 回退路径
 - 安装后 ad-hoc 签名并启动
+- `main` 分支推送后由 GitHub Actions 自动打包并发布 Release（标题格式：`yyyyMMdd HH:mm:ss`，时区 Asia/Shanghai）
 
 首次启动若未配置，会提示打开 Settings。
 

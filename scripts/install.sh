@@ -40,6 +40,7 @@ ICON_NAMES=(
   "ProviderIcon-claude.png"
   "ProviderIcon-grok.png"
 )
+APP_ICON_ICNS="AppIcon.icns"
 
 usage() {
   cat <<'EOF'
@@ -176,9 +177,16 @@ for icon in "${ICON_NAMES[@]}"; do
 done
 [[ "$installed_icons" -gt 0 ]] || die "no menu bar icons found to install"
 
-# Info.plist
-if [[ ! -f "$INFO_PLIST" ]]; then
-  cat > "$INFO_PLIST" <<PLIST
+# App icon (.icns) for Finder / About / Force Quit.
+if [[ -f "$SOURCE_ICON_DIR/$APP_ICON_ICNS" ]]; then
+  ditto "$SOURCE_ICON_DIR/$APP_ICON_ICNS" "$APP_RESOURCES/$APP_ICON_ICNS"
+  log "Installed app icon: $APP_ICON_ICNS"
+else
+  echo "warning: missing $APP_ICON_ICNS (app will use default generic icon)" >&2
+fi
+
+# Always rewrite Info.plist so icon / version keys stay in sync with this script.
+cat > "$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -189,6 +197,8 @@ if [[ ! -f "$INFO_PLIST" ]]; then
 	<string>${DISPLAY_NAME}</string>
 	<key>CFBundleExecutable</key>
 	<string>${PRODUCT_NAME}</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>${BUNDLE_ID}</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -212,14 +222,6 @@ if [[ ! -f "$INFO_PLIST" ]]; then
 </dict>
 </plist>
 PLIST
-else
-  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $PRODUCT_NAME" "$INFO_PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string $PRODUCT_NAME" "$INFO_PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$INFO_PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$INFO_PLIST"
-  /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$INFO_PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$INFO_PLIST"
-fi
 plutil -lint "$INFO_PLIST" >/dev/null
 
 rm -rf "$APP_CONTENTS/_CodeSignature"

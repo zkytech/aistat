@@ -191,9 +191,11 @@ final class AccountDetailHoverPanelController {
                 object: window,
                 queue: .main
             ) { [weak self] notification in
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard let object = notification.object as? NSWindow, object === self.trackedAnchorWindow else {
+                // Capture object outside the Task so Notification (non-Sendable)
+                // is not crossed into an async boundary under Swift 6.
+                let closedWindow = notification.object as? NSWindow
+                Task { @MainActor [weak self] in
+                    guard let self, let closedWindow, closedWindow === self.trackedAnchorWindow else {
                         return
                     }
                     self.requestDismiss()
@@ -204,7 +206,7 @@ final class AccountDetailHoverPanelController {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     guard let self else { return }
                     if self.trackedAnchorWindow?.isVisible != true {
                         self.requestDismiss()
@@ -216,12 +218,12 @@ final class AccountDetailHoverPanelController {
                 object: window,
                 queue: .main
             ) { [weak self] notification in
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard let object = notification.object as? NSWindow, object === self.trackedAnchorWindow else {
+                let changedWindow = notification.object as? NSWindow
+                Task { @MainActor [weak self] in
+                    guard let self, let changedWindow, changedWindow === self.trackedAnchorWindow else {
                         return
                     }
-                    if !object.isVisible || !object.occlusionState.contains(.visible) {
+                    if !changedWindow.isVisible || !changedWindow.occlusionState.contains(.visible) {
                         self.requestDismiss()
                     }
                 }
@@ -243,7 +245,7 @@ final class AccountDetailHoverPanelController {
         // events once the pointer leaves both windows, and global monitors
         // need Accessibility permission.
         let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.evaluatePointerLocation()
             }
         }

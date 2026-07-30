@@ -62,6 +62,14 @@ struct QuotaWidgetEntry: TimelineEntry {
                         periodEnd: Date().addingTimeInterval(6 * 24 * 3600)
                     )
                 ],
+                sub2Entries: [
+                    WidgetSub2Entry(
+                        id: "demo-sub2",
+                        name: "主账户",
+                        balanceText: "$12.40",
+                        planName: "Pro"
+                    )
+                ],
                 sub2BalanceText: "$12.40",
                 sub2PlanName: "Pro"
             )

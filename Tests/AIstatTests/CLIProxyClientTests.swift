@@ -210,8 +210,11 @@ final class CLIProxyClientTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
         let session = URLSession(configuration: config)
-        let appConfig = AppConfiguration(baseURL: "https://example.test", managementKey: "test-key", refreshIntervalSeconds: 300)
-        return CLIProxyClient(configuration: appConfig, session: session)
+        return CLIProxyClient(
+            baseURL: "https://example.test",
+            managementKey: "test-key",
+            session: session
+        )
     }
 }
 

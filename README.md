@@ -14,14 +14,15 @@ macOS 菜单栏工具，用来查看 AI 订阅账号的额度使用情况。
 
 ## 功能
 
-- 菜单栏摘要：显示最紧账号的剩余百分比，例如 `Grok 34%`
-- 多账号列表：状态点、周额度进度条（以剩余为主）、重置倒计时
+- 菜单栏摘要：显示最紧账号的剩余百分比，例如 `额度 34%`
+- **多组 CLIProxyAPI / Sub2API 连接**：每组可单独命名；菜单栏按 CLIProxy 名称分组，Sub2 余额前缀连接名
+- 多订阅账号列表：状态点、周额度进度条（以剩余为主）、重置倒计时
 - 悬停详情：周额度、月度额度、账号状态
-- **桌面小组件（WidgetKit）**：Small / Medium / Large 列表样式，外加大号「额度仪表盘」环形图；主程序刷新后自动同步
+- **桌面小组件（WidgetKit）**：Small / Medium / Large 列表样式，外加大号「额度仪表盘」环形图；需在设置中手动勾选展示源
 - 自动刷新（默认 5 分钟，最短 1 分钟）；手动刷新最短间隔 1 分钟
-- 可选：优先消耗即将刷新额度的账号（默认关闭；开启后按重置时间临近程度排序，并同步 CLIProxyAPI 账号 priority）
+- 可选：优先消耗即将刷新额度的账号（默认关闭；**按每个 CLIProxy 连接独立配置**）
 - 可选：开机自动启动（系统登录项，默认关闭）
-- 并发拉取账号数据，单账号失败不影响其他账号
+- 并发拉取账号数据，单连接 / 单账号失败不影响其他
 - 多数据源设置：CLIProxyAPI、Sub2API
 
 ## 系统要求
@@ -71,17 +72,23 @@ cd aistat
 
 | 数据源 | 需要配置 |
 |--------|----------|
-| CLIProxyAPI | Base URL、Management Key |
-| Sub2API | Base URL、API Key |
+| CLIProxyAPI | 可添加多组：名称、Base URL、Management Key |
+| Sub2API | 可添加多组：名称、Base URL、API Key |
 
-CLIProxyAPI 专属选项：
+CLIProxyAPI 每组专属选项：
 
-- **优先消耗即将刷新额度的账号**（默认关闭）：开启后，列表按周额度重置时间临近程度排序，并把对应 priority 写回 CLIProxyAPI，使代理优先调度即将刷新的账号。关闭时保持接口返回顺序，且不修改账号 priority。
+- **优先消耗即将刷新额度的账号**（默认关闭，**按连接独立生效**）：开启后，该连接下列表按周额度重置时间临近程度排序，并把对应 priority 写回该 CLIProxyAPI。关闭时保持接口返回顺序，且不修改账号 priority。
+
+菜单栏展示：
+
+- 订阅账号按 **CLIProxyAPI 连接名称** 分组
+- Sub2API 余额前缀为 **连接名称**
 
 共享设置：
 
 - 自动刷新间隔（默认 300 秒，最短 60 秒）
 - 开机自动启动（默认关闭；使用系统登录项，不写入 `config.json`）
+- **桌面小组件数据源**：在「通用」中手动勾选要展示的 CLIProxyAPI / Sub2API 连接（未勾选则小组件为空；多选时按连接列表顺序与组内默认排序）
 
 配置保存在本机：
 
@@ -93,20 +100,39 @@ CLIProxyAPI 专属选项：
 
 ```json
 {
-  "baseURL": "https://your-cliproxy-host",
-  "managementKey": "<management-key>",
-  "preferNearRefreshAccounts": false,
+  "cliProxyConnections": [
+    {
+      "id": "…",
+      "name": "家里",
+      "baseURL": "https://your-cliproxy-host",
+      "managementKey": "<management-key>",
+      "preferNearRefreshAccounts": false
+    }
+  ],
+  "sub2APIConnections": [
+    {
+      "id": "…",
+      "name": "主账户",
+      "baseURL": "https://your-sub2api-host",
+      "apiKey": "<api-key>"
+    }
+  ],
+  "widgetCLIProxyConnectionIDs": ["…"],
+  "widgetSub2APIConnectionIDs": ["…"],
   "refreshIntervalSeconds": 300
 }
 ```
+
+旧版单连接配置（`baseURL` / `managementKey` 等）首次加载时会自动迁移为名为「默认」的一组连接，并默认勾选进小组件。
 
 密钥只保存在本机，文件权限会尽量设为 `600`。请勿把真实 key 提交到 git。
 
 ## 桌面小组件
 
-1. 安装并至少成功刷新一次额度（菜单栏面板会写入小组件快照）。
-2. 打开 **通知中心** 或桌面编辑模式 → **编辑小组件** → 搜索 **AIstat** / **账号额度** / **额度仪表盘**。
-3. 可选样式：
+1. 在设置中添加 CLIProxyAPI / Sub2API 连接，并在 **通用 → 桌面小组件** 中勾选要展示的连接。
+2. 安装并至少成功刷新一次额度（菜单栏面板会写入小组件快照）。
+3. 打开 **通知中心** 或桌面编辑模式 → **编辑小组件** → 搜索 **AIstat** / **账号额度** / **额度仪表盘**。
+4. 可选样式：
    - **账号额度 · Small**：最紧账号的大号剩余百分比 + 进度条 + 重置倒计时
    - **账号额度 · Medium**：最多 3 个账号行 + Sub2 余额条
    - **账号额度 · Large**：进度条列表（最多 5 个账号）

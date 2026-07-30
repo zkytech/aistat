@@ -71,49 +71,31 @@ struct MenuBarContentView: View {
     @ViewBuilder
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if store.configuration.isSub2APIConfigured || store.sub2APIUsage != nil || store.sub2APIError != nil {
+            if !store.sub2APIEntries.isEmpty || store.configuration.isSub2APIConfigured {
                 sub2APISection
             }
 
-            if let globalError = store.globalError, store.accounts.isEmpty, !store.configuration.isConfigured {
+            if let globalError = store.globalError,
+               store.accountGroups.isEmpty,
+               !store.configuration.isConfigured {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(globalError)
                         .font(.system(size: 12))
                         .foregroundStyle(.red)
-                    Text("打开设置检查 baseURL 与 managementKey。")
+                    Text("打开设置检查 CLIProxyAPI / Sub2API 连接。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             } else if store.configuration.isConfigured {
-                if store.accounts.isEmpty {
+                if store.accountGroups.isEmpty {
                     Text(store.isRefreshing ? "正在加载账号…" : "暂无 OpenAI / Claude / Grok 账号")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 4)
                 } else {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let globalError = store.globalError {
-                            Text(globalError)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.orange)
-                                .padding(.bottom, 6)
-                        }
-
-                        ForEach(store.accounts) { item in
-                            AccountQuotaRow(
-                                item: item,
-                                isHighlighted: hoveredAccountID == item.id,
-                                onHoverChange: { isInside in
-                                    if isInside {
-                                        selectHoveredAccount(item.id)
-                                    }
-                                }
-                            )
-                            if item.id != store.accounts.last?.id {
-                                Divider()
-                                    .opacity(0.45)
-                                    .padding(.leading, 36)
-                            }
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(store.accountGroups) { group in
+                            cliProxyGroupSection(group)
                         }
                     }
                 }
@@ -128,35 +110,103 @@ struct MenuBarContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    @ViewBuilder
+    private func cliProxyGroupSection(_ group: CLIProxyAccountGroup) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "server.rack")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(group.connectionName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let error = group.error, !error.isEmpty {
+                    Text("!")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .help(error)
+                }
+            }
+            .padding(.horizontal, 4)
+
+            if let error = group.error, group.accounts.isEmpty {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 2)
+            }
+
+            if group.accounts.isEmpty {
+                Text(store.isRefreshing ? "正在加载…" : "暂无订阅账号")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(group.accounts) { item in
+                        AccountQuotaRow(
+                            item: item,
+                            isHighlighted: hoveredAccountID == item.id,
+                            onHoverChange: { isInside in
+                                if isInside {
+                                    selectHoveredAccount(item.id)
+                                }
+                            }
+                        )
+                        if item.id != group.accounts.last?.id {
+                            Divider()
+                                .opacity(0.45)
+                                .padding(.leading, 36)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var sub2APISection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Label("Sub2API", systemImage: "creditcard")
+            ForEach(displaySub2Entries) { entry in
+                HStack(spacing: 10) {
+                    Label {
+                        Text(entry.connectionName)
+                            .lineLimit(1)
+                    } icon: {
+                        Image(systemName: "creditcard")
+                    }
                     .font(.system(size: 12, weight: .semibold))
-                Spacer(minLength: 8)
-                if let planName = store.sub2APIUsage?.planName, !planName.isEmpty {
-                    Text(planName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if let error = store.sub2APIError {
-                    Text("错误")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.red)
-                        .help(error)
-                } else if let usage = store.sub2APIUsage, let balance = usage.availableBalance {
-                    Text(formattedBalance(balance, unit: usage.unit))
-                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                        .accessibilityLabel("Sub2API 可用余额 \(formattedBalance(balance, unit: usage.unit))")
-                } else if store.isRefreshing {
-                    Text("加载中…")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("--")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 8)
+
+                    if let planName = entry.usage?.planName, !planName.isEmpty {
+                        Text(planName)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    if let error = entry.error {
+                        Text("错误")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.red)
+                            .help(error)
+                    } else if let usage = entry.usage, let balance = usage.availableBalance {
+                        Text(formattedBalance(balance, unit: usage.unit))
+                            .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                            .accessibilityLabel("\(entry.connectionName) 可用余额 \(formattedBalance(balance, unit: usage.unit))")
+                    } else if store.isRefreshing {
+                        Text("加载中…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("--")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -166,6 +216,23 @@ struct MenuBarContentView: View {
             }
         }
         .padding(.horizontal, 4)
+    }
+
+    /// Prefer live results; if not yet refreshed, show configured connection placeholders.
+    private var displaySub2Entries: [Sub2APIUsageEntry] {
+        if !store.sub2APIEntries.isEmpty {
+            return store.sub2APIEntries
+        }
+        return store.configuration.sub2APIConnections
+            .filter(\.isConfigured)
+            .map {
+                Sub2APIUsageEntry(
+                    connectionID: $0.id,
+                    connectionName: $0.displayName,
+                    usage: nil,
+                    error: nil
+                )
+            }
     }
 
     private func formattedBalance(_ value: Double, unit: String?) -> String {

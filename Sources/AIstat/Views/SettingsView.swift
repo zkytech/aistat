@@ -24,9 +24,9 @@ private enum SettingsPlatform: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .cliproxyapi:
-            return "连接 CLIProxyAPI 管理端，读取 xAI 账号的周额度与月度用量。"
+            return "可添加多组 CLIProxyAPI 管理端；菜单栏按连接名称分组显示订阅账号。"
         case .sub2api:
-            return "连接 Sub2API，通过用量接口读取账户余额和已使用额度。"
+            return "可添加多组 Sub2API 账号；余额前会显示连接名称。"
         }
     }
 
@@ -98,12 +98,11 @@ struct SettingsView: View {
     @ObservedObject var store: QuotaStore
 
     @State private var selectedPane: SettingsPane = .platform(.cliproxyapi)
-    @State private var baseURL: String = ""
-    @State private var managementKey: String = ""
-    @State private var sub2APIBaseURL: String = ""
-    @State private var sub2APIKey: String = ""
+    @State private var cliProxyConnections: [CLIProxyConnection] = []
+    @State private var sub2APIConnections: [Sub2APIConnection] = []
+    @State private var widgetCLIProxyConnectionIDs: Set<String> = []
+    @State private var widgetSub2APIConnectionIDs: Set<String> = []
     @State private var refreshIntervalSeconds: Int = AppConfiguration.defaultRefreshIntervalSeconds
-    @State private var preferNearRefreshAccounts: Bool = false
     @State private var launchAtLoginEnabled: Bool = false
     @State private var launchAtLoginHint: String?
     @State private var statusMessage: String?
@@ -152,7 +151,7 @@ struct SettingsView: View {
                 sidebarRow(
                     pane: .general,
                     title: "通用",
-                    subtitle: "刷新与启动"
+                    subtitle: "刷新与小组件"
                 ) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 15, weight: .semibold))
@@ -257,7 +256,7 @@ struct SettingsView: View {
     @ViewBuilder
     private func platformDetail(_ platform: SettingsPlatform) -> some View {
         platformHeader(platform)
-        connectionSection(for: platform)
+        connectionsSection(for: platform)
         dataSourceNotesSection(for: platform)
     }
 
@@ -265,6 +264,7 @@ struct SettingsView: View {
         Group {
             generalHeader
             refreshSection
+            widgetSelectionSection
             launchAtLoginSection
             configurationFileSection
         }
@@ -303,7 +303,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("通用")
                     .font(.title2.weight(.semibold))
-                Text("自动刷新、开机启动与本地配置文件等应用级选项。")
+                Text("自动刷新、小组件数据源、开机启动与本地配置文件。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -312,53 +312,154 @@ struct SettingsView: View {
     }
 
     private func configurationStatus(for platform: SettingsPlatform) -> some View {
-        let configured = isPlatformConfigured(platform)
-        return Label(configured ? "已配置" : "未配置", systemImage: configured ? "checkmark.circle.fill" : "circle.dashed")
+        let count = configuredConnectionCount(platform)
+        let label: String
+        if count == 0 {
+            label = "未配置"
+        } else {
+            label = "\(count) 组已配置"
+        }
+        return Label(label, systemImage: count > 0 ? "checkmark.circle.fill" : "circle.dashed")
             .font(.caption.weight(.medium))
-            .foregroundStyle(configured ? Color.green : .secondary)
+            .foregroundStyle(count > 0 ? Color.green : .secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.1), in: Capsule())
     }
 
     @ViewBuilder
-    private func connectionSection(for platform: SettingsPlatform) -> some View {
-        settingsSection(title: "连接配置", subtitle: "填写服务地址和访问凭据。") {
+    private func connectionsSection(for platform: SettingsPlatform) -> some View {
+        settingsSection(
+            title: "连接账号",
+            subtitle: "每组可单独命名；菜单栏与小组件按名称区分。"
+        ) {
             switch platform {
             case .cliproxyapi:
-                settingsField("Base URL", hint: "CLIProxyAPI 管理服务地址") {
-                    TextField("https://127.0.0.1:8317", text: $baseURL)
+                if cliProxyConnections.isEmpty {
+                    emptyConnectionsHint("尚未添加 CLIProxyAPI 连接")
+                }
+                ForEach($cliProxyConnections) { $connection in
+                    cliProxyConnectionEditor(connection: $connection)
+                }
+                Button {
+                    cliProxyConnections.append(
+                        CLIProxyConnection(name: defaultCLIProxyName())
+                    )
+                } label: {
+                    Label("添加 CLIProxyAPI 账号", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderless)
+            case .sub2api:
+                if sub2APIConnections.isEmpty {
+                    emptyConnectionsHint("尚未添加 Sub2API 连接")
+                }
+                ForEach($sub2APIConnections) { $connection in
+                    sub2APIConnectionEditor(connection: $connection)
+                }
+                Button {
+                    sub2APIConnections.append(
+                        Sub2APIConnection(name: defaultSub2APIName())
+                    )
+                } label: {
+                    Label("添加 Sub2API 账号", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func emptyConnectionsHint(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cliProxyConnectionEditor(connection: Binding<CLIProxyConnection>) -> some View {
+        let id = connection.wrappedValue.id
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(connection.wrappedValue.displayName)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if connection.wrappedValue.isConfigured {
+                        Label("已配置", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    Button(role: .destructive) {
+                        removeCLIProxyConnection(id: id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("删除此连接")
+                }
+
+                settingsField("名称", hint: "用于菜单栏分组与小组件选择") {
+                    TextField("例如：家里 / 公司", text: connection.name)
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("CLIProxyAPI Base URL")
+                }
+                settingsField("Base URL", hint: "CLIProxyAPI 管理服务地址") {
+                    TextField("https://127.0.0.1:8317", text: connection.baseURL)
+                        .textFieldStyle(.roundedBorder)
                 }
                 settingsField("Management Key", hint: "用于访问 Management API") {
-                    SecureField("仅保存在本机", text: $managementKey)
+                    SecureField("仅保存在本机", text: connection.managementKey)
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("CLIProxyAPI Management Key")
                 }
-                Toggle(isOn: $preferNearRefreshAccounts) {
+                Toggle(isOn: connection.preferNearRefreshAccounts) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("优先消耗即将刷新额度的账号")
-                        Text("开启后按周额度重置时间排序，并同步 CLIProxyAPI 账号 priority。")
+                        Text("仅对本连接生效：按周额度重置时间排序，并同步该 CLIProxyAPI 的 priority。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .toggleStyle(.switch)
-                .accessibilityLabel("优先消耗即将刷新额度的账号")
-            case .sub2api:
-                settingsField("Base URL", hint: "Sub2API 服务地址") {
-                    TextField("https://aihub.top", text: $sub2APIBaseURL)
+            }
+            .padding(4)
+        }
+    }
+
+    private func sub2APIConnectionEditor(connection: Binding<Sub2APIConnection>) -> some View {
+        let id = connection.wrappedValue.id
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(connection.wrappedValue.displayName)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if connection.wrappedValue.isConfigured {
+                        Label("已配置", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    Button(role: .destructive) {
+                        removeSub2APIConnection(id: id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("删除此连接")
+                }
+
+                settingsField("名称", hint: "显示在余额前") {
+                    TextField("例如：主账户 / 备用", text: connection.name)
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Sub2API Base URL")
+                }
+                settingsField("Base URL", hint: "Sub2API 服务地址") {
+                    TextField("https://aihub.top", text: connection.baseURL)
+                        .textFieldStyle(.roundedBorder)
                 }
                 settingsField("API Key", hint: "作为 Bearer Token 发送") {
-                    SecureField("仅保存在本机", text: $sub2APIKey)
+                    SecureField("仅保存在本机", text: connection.apiKey)
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Sub2API API Key")
                 }
             }
+            .padding(4)
         }
     }
 
@@ -367,11 +468,13 @@ struct SettingsView: View {
         settingsSection(title: "数据来源", subtitle: "当前数据源使用的接口与范围。") {
             switch platform {
             case .cliproxyapi:
-                infoRow(icon: "person.2", text: "从 Management API 获取 xAI 账号列表。")
+                infoRow(icon: "person.2", text: "从 Management API 获取 xAI / OpenAI / Claude 账号列表。")
                 infoRow(icon: "chart.bar", text: "逐账号读取周额度；可用时同时读取月度额度。")
+                infoRow(icon: "rectangle.split.3x1", text: "多组连接在菜单栏按连接名称分组显示。")
             case .sub2api:
                 infoRow(icon: "chart.bar", text: "从 GET /v1/usage 读取账户用量和余额。")
                 infoRow(icon: "key", text: "请求使用 Authorization: Bearer <API Key>。")
+                infoRow(icon: "tag", text: "多组余额前缀为各自的连接名称。")
             }
         }
     }
@@ -389,6 +492,86 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var widgetSelectionSection: some View {
+        settingsSection(
+            title: "桌面小组件",
+            subtitle: "必须手动勾选要展示的连接；多选时按连接列表顺序与组内默认排序展示。"
+        ) {
+            if cliProxyConnections.isEmpty && sub2APIConnections.isEmpty {
+                Text("请先在左侧添加 CLIProxyAPI 或 Sub2API 连接。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                if !cliProxyConnections.isEmpty {
+                    Text("CLIProxyAPI")
+                        .font(.subheadline.weight(.medium))
+                    ForEach(cliProxyConnections) { connection in
+                        Toggle(isOn: widgetCLIBinding(for: connection.id)) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(connection.displayName)
+                                Text(connection.isConfigured ? connection.normalizedBaseURL : "未配置完整")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                        .disabled(!connection.isConfigured)
+                    }
+                }
+
+                if !sub2APIConnections.isEmpty {
+                    if !cliProxyConnections.isEmpty {
+                        Divider()
+                    }
+                    Text("Sub2API")
+                        .font(.subheadline.weight(.medium))
+                    ForEach(sub2APIConnections) { connection in
+                        Toggle(isOn: widgetSub2Binding(for: connection.id)) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(connection.displayName)
+                                Text(connection.isConfigured ? connection.normalizedBaseURL : "未配置完整")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                        .disabled(!connection.isConfigured)
+                    }
+                }
+            }
+        }
+    }
+
+    private func widgetCLIBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { widgetCLIProxyConnectionIDs.contains(id) },
+            set: { selected in
+                if selected {
+                    widgetCLIProxyConnectionIDs.insert(id)
+                } else {
+                    widgetCLIProxyConnectionIDs.remove(id)
+                }
+            }
+        )
+    }
+
+    private func widgetSub2Binding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { widgetSub2APIConnectionIDs.contains(id) },
+            set: { selected in
+                if selected {
+                    widgetSub2APIConnectionIDs.insert(id)
+                } else {
+                    widgetSub2APIConnectionIDs.remove(id)
+                }
+            }
+        )
     }
 
     private var launchAtLoginSection: some View {
@@ -435,7 +618,7 @@ struct SettingsView: View {
     }
 
     private var configurationFileSection: some View {
-        settingsSection(title: "配置文件", subtitle: "两个数据源保存在同一个本地配置文件中。") {
+        settingsSection(title: "配置文件", subtitle: "所有连接保存在同一个本地配置文件中。") {
             Text(AppConfigurationStore.configURL.path)
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -542,23 +725,44 @@ struct SettingsView: View {
     }
 
     private func isPlatformConfigured(_ platform: SettingsPlatform) -> Bool {
+        configuredConnectionCount(platform) > 0
+    }
+
+    private func configuredConnectionCount(_ platform: SettingsPlatform) -> Int {
         switch platform {
         case .cliproxyapi:
-            return !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !managementKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return cliProxyConnections.filter(\.isConfigured).count
         case .sub2api:
-            return !sub2APIBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !sub2APIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return sub2APIConnections.filter(\.isConfigured).count
         }
     }
 
+    private func defaultCLIProxyName() -> String {
+        let index = cliProxyConnections.count + 1
+        return index == 1 ? "默认" : "CLIProxy \(index)"
+    }
+
+    private func defaultSub2APIName() -> String {
+        let index = sub2APIConnections.count + 1
+        return index == 1 ? "默认" : "Sub2API \(index)"
+    }
+
+    private func removeCLIProxyConnection(id: String) {
+        cliProxyConnections.removeAll { $0.id == id }
+        widgetCLIProxyConnectionIDs.remove(id)
+    }
+
+    private func removeSub2APIConnection(id: String) {
+        sub2APIConnections.removeAll { $0.id == id }
+        widgetSub2APIConnectionIDs.remove(id)
+    }
+
     private func loadFromStore() {
-        baseURL = store.configuration.baseURL
-        managementKey = store.configuration.managementKey
-        sub2APIBaseURL = store.configuration.sub2APIBaseURL
-        sub2APIKey = store.configuration.sub2APIKey
+        cliProxyConnections = store.configuration.cliProxyConnections
+        sub2APIConnections = store.configuration.sub2APIConnections
+        widgetCLIProxyConnectionIDs = Set(store.configuration.widgetCLIProxyConnectionIDs)
+        widgetSub2APIConnectionIDs = Set(store.configuration.widgetSub2APIConnectionIDs)
         refreshIntervalSeconds = max(store.configuration.refreshIntervalSeconds, minimumRefreshSeconds)
-        preferNearRefreshAccounts = store.configuration.preferNearRefreshAccounts
         syncLaunchAtLoginFromSystem()
     }
 
@@ -578,19 +782,19 @@ struct SettingsView: View {
         isSaving = true
         defer { isSaving = false }
 
-        let configuration = AppConfiguration(
-            baseURL: baseURL,
-            managementKey: managementKey,
-            sub2APIBaseURL: sub2APIBaseURL,
-            sub2APIKey: sub2APIKey,
+        var configuration = AppConfiguration(
+            cliProxyConnections: cliProxyConnections,
+            sub2APIConnections: sub2APIConnections,
             refreshIntervalSeconds: max(refreshIntervalSeconds, minimumRefreshSeconds),
-            preferNearRefreshAccounts: preferNearRefreshAccounts
+            widgetCLIProxyConnectionIDs: Array(widgetCLIProxyConnectionIDs),
+            widgetSub2APIConnectionIDs: Array(widgetSub2APIConnectionIDs)
         )
+        configuration.pruneWidgetSelection()
 
         do {
             try store.updateConfiguration(configuration)
-            refreshIntervalSeconds = configuration.refreshIntervalSeconds
-            preferNearRefreshAccounts = configuration.preferNearRefreshAccounts
+            // Reload local editor state with pruned selection / normalized values.
+            loadFromStore()
             statusMessage = "已保存到 Application Support 并开始刷新"
             isError = false
         } catch {

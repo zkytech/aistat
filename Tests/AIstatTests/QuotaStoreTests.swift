@@ -250,6 +250,7 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertEqual(store.accounts.map(\.account.authIndex), ["a", "b"])
         XCTAssertEqual(store.globalError?.contains("优先级同步失败"), true)
     }
+
     func testSub2APIBalanceSuccessAndFailureIsolation() async {
         let accounts = [AuthAccount(provider: "xai", email: "ok@x.ai", name: "ok.json", authIndex: "a")]
         let client = FakeClient(
@@ -287,15 +288,16 @@ final class QuotaStoreTests: XCTestCase {
 
         await store.refresh(force: true)
         XCTAssertEqual(store.accounts.count, 1)
-        XCTAssertEqual(store.sub2APIUsage?.availableBalance, 12.16)
-        XCTAssertNil(store.sub2APIError)
+        XCTAssertEqual(store.sub2APIEntries.count, 1)
+        XCTAssertEqual(store.sub2APIEntries[0].usage?.availableBalance, 12.16)
+        XCTAssertNil(store.sub2APIEntries[0].error)
 
         sub2.result = .failure(Sub2APIClientError.httpStatus(500, "balance down"))
         await store.refresh(force: true)
 
         XCTAssertEqual(store.accounts.count, 1)
         XCTAssertEqual(store.accounts[0].weekly?.usedPercent, 10)
-        XCTAssertEqual(store.sub2APIError?.contains("balance down"), true)
+        XCTAssertEqual(store.sub2APIEntries[0].error?.contains("balance down"), true)
     }
 
     func testSub2APIOnlyConfigurationStillRefreshesBalance() async {
@@ -331,7 +333,8 @@ final class QuotaStoreTests: XCTestCase {
 
         XCTAssertEqual(client.fetchAccountsCount, 0)
         XCTAssertEqual(store.accounts.count, 0)
-        XCTAssertEqual(store.sub2APIUsage?.availableBalance, 0)
+        XCTAssertEqual(store.sub2APIEntries.count, 1)
+        XCTAssertEqual(store.sub2APIEntries[0].usage?.availableBalance, 0)
         XCTAssertNil(store.globalError)
     }
 
@@ -404,8 +407,155 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertEqual(store.accounts.first?.weekly?.remainingPercent, 80)
         XCTAssertEqual(store.menuTitle, "额度 80%")
     }
-}
 
+    func testMultipleCLIProxyConnectionsGroupIndependentlyAndPriorityIsPerConnection() async {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let near = now.addingTimeInterval(3600)
+        let far = now.addingTimeInterval(86_400)
+
+        let home = CLIProxyConnection(
+            id: "home",
+            name: "家里",
+            baseURL: "https://home.test",
+            managementKey: "hk",
+            preferNearRefreshAccounts: true
+        )
+        let office = CLIProxyConnection(
+            id: "office",
+            name: "公司",
+            baseURL: "https://office.test",
+            managementKey: "ok",
+            preferNearRefreshAccounts: false
+        )
+
+        let homeClient = FakeClient(
+            accounts: [
+                AuthAccount(provider: "xai", email: "far@home", name: "far.json", authIndex: "far"),
+                AuthAccount(provider: "xai", email: "near@home", name: "near.json", authIndex: "near")
+            ],
+            weekly: [
+                "far": .success(WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: far, productUsage: [])),
+                "near": .success(WeeklyQuota(usedPercent: 20, periodStart: nil, periodEnd: near, productUsage: []))
+            ]
+        )
+        let officeClient = FakeClient(
+            accounts: [
+                AuthAccount(provider: "xai", email: "a@office", name: "a.json", authIndex: "a"),
+                AuthAccount(provider: "xai", email: "b@office", name: "b.json", authIndex: "b")
+            ],
+            weekly: [
+                "a": .success(WeeklyQuota(usedPercent: 30, periodStart: nil, periodEnd: far, productUsage: [])),
+                "b": .success(WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: near, productUsage: []))
+            ]
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                cliProxyConnections: [home, office],
+                refreshIntervalSeconds: 300,
+                widgetCLIProxyConnectionIDs: [home.id, office.id]
+            ),
+            includeMonthly: false,
+            clientFactory: { connection in
+                connection.id == home.id ? homeClient : officeClient
+            },
+            nowProvider: { now }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.accountGroups.map(\.connectionName), ["家里", "公司"])
+        XCTAssertEqual(
+            store.accountGroups[0].accounts.map(\.account.authIndex),
+            ["near", "far"]
+        )
+        XCTAssertEqual(
+            store.accountGroups[1].accounts.map(\.account.authIndex),
+            ["a", "b"]
+        )
+        XCTAssertEqual(homeClient.priorityUpdates.count, 1)
+        XCTAssertTrue(officeClient.priorityUpdates.isEmpty)
+        XCTAssertEqual(store.accounts.map(\.connectionName), ["家里", "家里", "公司", "公司"])
+        // IDs must be unique across hosts even with overlapping authIndex shapes.
+        XCTAssertEqual(Set(store.accounts.map(\.id)).count, 4)
+    }
+
+    func testMultipleSub2APIEntriesCarryConnectionNames() async {
+        let primary = Sub2APIConnection(id: "p", name: "主账户", baseURL: "https://a.example", apiKey: "k1")
+        let backup = Sub2APIConnection(id: "b", name: "备用", baseURL: "https://b.example", apiKey: "k2")
+
+        let clients: [String: FakeSub2APIClient] = [
+            primary.id: FakeSub2APIClient(
+                result: .success(
+                    Sub2APIUsage(
+                        mode: "unrestricted",
+                        planName: "Pro",
+                        unit: "USD",
+                        balance: 10,
+                        remaining: 10,
+                        quota: nil,
+                        subscription: nil
+                    )
+                )
+            ),
+            backup.id: FakeSub2APIClient(
+                result: .success(
+                    Sub2APIUsage(
+                        mode: "unrestricted",
+                        planName: nil,
+                        unit: "USD",
+                        balance: 1,
+                        remaining: 1,
+                        quota: nil,
+                        subscription: nil
+                    )
+                )
+            )
+        ]
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                sub2APIConnections: [primary, backup],
+                refreshIntervalSeconds: 300,
+                widgetSub2APIConnectionIDs: [primary.id, backup.id]
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in FakeClient(accounts: [], weekly: [:]) },
+            sub2APIClientFactory: { connection in
+                clients[connection.id]!
+            }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.sub2APIEntries.map(\.connectionName), ["主账户", "备用"])
+        XCTAssertEqual(store.sub2APIEntries.map { $0.usage?.availableBalance }, [10, 1])
+    }
+
+    func testLegacyConfigMigrationToNamedConnections() throws {
+        let legacy = """
+        {
+          "baseURL": "https://legacy.test",
+          "managementKey": "mk",
+          "sub2APIBaseURL": "https://sub2.legacy",
+          "sub2APIKey": "sk",
+          "preferNearRefreshAccounts": true,
+          "refreshIntervalSeconds": 120
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(AppConfiguration.self, from: legacy)
+        XCTAssertEqual(config.cliProxyConnections.count, 1)
+        XCTAssertEqual(config.cliProxyConnections[0].name, "默认")
+        XCTAssertEqual(config.cliProxyConnections[0].baseURL, "https://legacy.test")
+        XCTAssertTrue(config.cliProxyConnections[0].preferNearRefreshAccounts)
+        XCTAssertEqual(config.sub2APIConnections.count, 1)
+        XCTAssertEqual(config.sub2APIConnections[0].apiKey, "sk")
+        XCTAssertEqual(config.widgetCLIProxyConnectionIDs, [config.cliProxyConnections[0].id])
+        XCTAssertEqual(config.widgetSub2APIConnectionIDs, [config.sub2APIConnections[0].id])
+        XCTAssertEqual(config.refreshIntervalSeconds, 120)
+    }
+}
 
 private final class FakeClient: CLIProxyClientProtocol, @unchecked Sendable {
     var accounts: [AuthAccount]
@@ -476,7 +626,6 @@ private final class FakeSub2APIClient: Sub2APIClientProtocol, @unchecked Sendabl
         }
     }
 }
-
 
 @MainActor
 private func waitUntil(

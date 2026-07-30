@@ -7,9 +7,8 @@ import AIstatShared
 final class QuotaStore: ObservableObject {
     static let minimumRefreshInterval: TimeInterval = TimeInterval(AppConfiguration.minimumRefreshIntervalSeconds)
 
-    @Published private(set) var accounts: [AccountQuota] = []
-    @Published private(set) var sub2APIUsage: Sub2APIUsage?
-    @Published private(set) var sub2APIError: String?
+    @Published private(set) var accountGroups: [CLIProxyAccountGroup] = []
+    @Published private(set) var sub2APIEntries: [Sub2APIUsageEntry] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var nextRefreshAvailableAt: Date?
@@ -17,8 +16,13 @@ final class QuotaStore: ObservableObject {
     @Published private(set) var configuration: AppConfiguration
     @Published private(set) var menuTitle: String = "额度 --"
 
-    private var clientFactory: (AppConfiguration) -> any CLIProxyClientProtocol
-    private var sub2APIClientFactory: (AppConfiguration) -> any Sub2APIClientProtocol
+    /// Flat subscription rows across all CLIProxy connections (menu title / hover lookup).
+    var accounts: [AccountQuota] {
+        accountGroups.flatMap(\.accounts)
+    }
+
+    private var clientFactory: (CLIProxyConnection) -> any CLIProxyClientProtocol
+    private var sub2APIClientFactory: (Sub2APIConnection) -> any Sub2APIClientProtocol
     private var refreshTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var lastRefreshAttemptAt: Date?
@@ -34,8 +38,8 @@ final class QuotaStore: ObservableObject {
     init(
         configuration: AppConfiguration = AppConfigurationStore.load(),
         includeMonthly: Bool = true,
-        clientFactory: @escaping (AppConfiguration) -> any CLIProxyClientProtocol = { CLIProxyClient(configuration: $0) },
-        sub2APIClientFactory: @escaping (AppConfiguration) -> any Sub2APIClientProtocol = { Sub2APIClient(configuration: $0) },
+        clientFactory: @escaping (CLIProxyConnection) -> any CLIProxyClientProtocol = { CLIProxyClient(connection: $0) },
+        sub2APIClientFactory: @escaping (Sub2APIConnection) -> any Sub2APIClientProtocol = { Sub2APIClient(connection: $0) },
         nowProvider: @escaping () -> Date = { Date() }
     ) {
         self.configuration = configuration
@@ -63,8 +67,10 @@ final class QuotaStore: ObservableObject {
     }
 
     func updateConfiguration(_ configuration: AppConfiguration) throws {
-        try AppConfigurationStore.save(configuration)
-        self.configuration = configuration
+        var next = configuration
+        next.pruneWidgetSelection()
+        try AppConfigurationStore.save(next)
+        self.configuration = next
         restartAutoRefresh()
         Task { await refresh(force: true) }
     }
@@ -103,14 +109,13 @@ final class QuotaStore: ObservableObject {
     }
 
     private func performRefresh() async {
-        let hasCLIProxy = configuration.isConfigured
-        let hasSub2API = configuration.isSub2APIConfigured
+        let cliConnections = configuration.cliProxyConnections.filter(\.isConfigured)
+        let sub2Connections = configuration.sub2APIConnections.filter(\.isConfigured)
 
-        guard hasCLIProxy || hasSub2API else {
+        guard !cliConnections.isEmpty || !sub2Connections.isEmpty else {
             globalError = CLIProxyClientError.notConfigured.localizedDescription
-            accounts = []
-            sub2APIUsage = nil
-            sub2APIError = nil
+            accountGroups = []
+            sub2APIEntries = []
             updateMenuTitle()
             publishWidgetSnapshot(updatedAt: nowProvider())
             return
@@ -119,119 +124,233 @@ final class QuotaStore: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let client = clientFactory(configuration)
-        let sub2APIClient = sub2APIClientFactory(configuration)
         let shouldFetchMonthly = includeMonthly
         let now = nowProvider()
+        var groupErrors: [String] = []
 
-        async let sub2APIResult: Result<Sub2APIUsage, Error>? = {
-            guard hasSub2API else { return nil }
-            do {
-                return .success(try await sub2APIClient.fetchUsage())
-            } catch {
-                return .failure(error)
-            }
-        }()
+        // Snapshot previous groups so a list-fetch failure keeps last good rows for that host.
+        let previousByID = Dictionary(uniqueKeysWithValues: accountGroups.map { ($0.connectionID, $0) })
 
-        if hasCLIProxy {
-            do {
-                let authAccounts = try await client.fetchAccounts()
-                if authAccounts.isEmpty {
-                    accounts = []
-                    lastRefreshAt = now
-                    updateMenuTitle()
-                    globalError = nil
-                } else {
-                    var next: [AccountQuota] = authAccounts.map {
-                        AccountQuota(account: $0, weekly: nil, monthly: nil, errorMessage: nil)
-                    }
+        async let sub2Results: [Sub2APIUsageEntry] = fetchAllSub2API(connections: sub2Connections)
 
-                    await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, String?).self) { group in
-                        for (index, item) in next.enumerated() {
-                            let account = item.account
-                            group.addTask {
-                                do {
-                                    let weekly = try await client.fetchWeeklyQuota(for: account)
-                                    var monthly: MonthlyQuota?
-                                    if shouldFetchMonthly {
-                                        monthly = try? await client.fetchMonthlyQuota(for: account)
-                                    }
-                                    return (index, weekly.fillingMissingUsage(from: monthly), monthly, nil)
-                                } catch {
-                                    return (index, nil, nil, error.localizedDescription)
-                                }
-                            }
-                        }
+        if cliConnections.isEmpty {
+            accountGroups = []
+        } else {
+            var nextGroups: [CLIProxyAccountGroup] = []
 
-                        for await (index, weekly, monthly, errorMessage) in group {
-                            next[index].weekly = weekly
-                            next[index].monthly = monthly
-                            next[index].errorMessage = errorMessage
-                        }
-                    }
-
-                    if configuration.preferNearRefreshAccounts {
-                        let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
-                        accounts = sorted
-                        lastRefreshAt = now
-                        updateMenuTitle()
-
-                        let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
-                        do {
-                            try await client.updateAuthPriorities(priorities)
-                            globalError = nil
-                        } catch {
-                            // Keep sorted quota data even if priority write-back fails.
-                            globalError = "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
-                        }
-                    } else {
-                        accounts = next
-                        lastRefreshAt = now
-                        updateMenuTitle()
-                        globalError = nil
+            await withTaskGroup(of: CLIProxyAccountGroup.self) { group in
+                for connection in cliConnections {
+                    let previous = previousByID[connection.id]
+                    group.addTask { [clientFactory, shouldFetchMonthly, now] in
+                        await Self.refreshCLIProxyGroup(
+                            connection: connection,
+                            previous: previous,
+                            client: clientFactory(connection),
+                            includeMonthly: shouldFetchMonthly,
+                            now: now
+                        )
                     }
                 }
-            } catch {
-                // Keep previous successful account rows if list fetch fails later.
-                globalError = error.localizedDescription
-                updateMenuTitle()
+                for await result in group {
+                    nextGroups.append(result)
+                }
             }
+
+            // Preserve configuration order (task group completes out of order).
+            let order = Dictionary(uniqueKeysWithValues: cliConnections.enumerated().map { ($0.element.id, $0.offset) })
+            nextGroups.sort { (order[$0.connectionID] ?? 0) < (order[$1.connectionID] ?? 0) }
+            accountGroups = nextGroups
+            groupErrors = nextGroups.compactMap { group in
+                guard let error = group.error, !error.isEmpty else { return nil }
+                return "\(group.connectionName)：\(error)"
+            }
+        }
+
+        sub2APIEntries = await sub2Results
+        lastRefreshAt = now
+
+        if accountGroups.isEmpty && sub2APIEntries.allSatisfy({ $0.usage == nil }) {
+            if let firstError = groupErrors.first
+                ?? sub2APIEntries.compactMap(\.error).first {
+                globalError = firstError
+            } else {
+                globalError = nil
+            }
+        } else if !groupErrors.isEmpty {
+            // Partial success: surface priority / list errors without wiping data.
+            globalError = groupErrors.joined(separator: "；")
         } else {
-            accounts = []
             globalError = nil
-            lastRefreshAt = now
-            updateMenuTitle()
         }
 
-        switch await sub2APIResult {
-        case .success(let usage):
-            sub2APIUsage = usage
-            sub2APIError = nil
-            lastRefreshAt = now
-        case .failure(let error):
-            sub2APIError = error.localizedDescription
-        case .none:
-            sub2APIUsage = nil
-            sub2APIError = nil
-        }
-
+        updateMenuTitle()
         publishWidgetSnapshot(updatedAt: lastRefreshAt ?? nowProvider())
     }
 
+    private static func refreshCLIProxyGroup(
+        connection: CLIProxyConnection,
+        previous: CLIProxyAccountGroup?,
+        client: any CLIProxyClientProtocol,
+        includeMonthly: Bool,
+        now: Date
+    ) async -> CLIProxyAccountGroup {
+        let connectionName = connection.displayName
+
+        do {
+            let authAccounts = try await client.fetchAccounts()
+            if authAccounts.isEmpty {
+                return CLIProxyAccountGroup(
+                    connectionID: connection.id,
+                    connectionName: connectionName,
+                    accounts: [],
+                    error: nil
+                )
+            }
+
+            var next: [AccountQuota] = authAccounts.map {
+                AccountQuota(
+                    connectionID: connection.id,
+                    connectionName: connectionName,
+                    account: $0,
+                    weekly: nil,
+                    monthly: nil,
+                    errorMessage: nil
+                )
+            }
+
+            await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, String?).self) { group in
+                for (index, item) in next.enumerated() {
+                    let account = item.account
+                    group.addTask {
+                        do {
+                            let weekly = try await client.fetchWeeklyQuota(for: account)
+                            var monthly: MonthlyQuota?
+                            if includeMonthly {
+                                monthly = try? await client.fetchMonthlyQuota(for: account)
+                            }
+                            return (index, weekly.fillingMissingUsage(from: monthly), monthly, nil)
+                        } catch {
+                            return (index, nil, nil, error.localizedDescription)
+                        }
+                    }
+                }
+
+                for await (index, weekly, monthly, errorMessage) in group {
+                    next[index].weekly = weekly
+                    next[index].monthly = monthly
+                    next[index].errorMessage = errorMessage
+                }
+            }
+
+            if connection.preferNearRefreshAccounts {
+                let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
+                let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
+                do {
+                    try await client.updateAuthPriorities(priorities)
+                    return CLIProxyAccountGroup(
+                        connectionID: connection.id,
+                        connectionName: connectionName,
+                        accounts: sorted,
+                        error: nil
+                    )
+                } catch {
+                    return CLIProxyAccountGroup(
+                        connectionID: connection.id,
+                        connectionName: connectionName,
+                        accounts: sorted,
+                        error: "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
+                    )
+                }
+            }
+
+            return CLIProxyAccountGroup(
+                connectionID: connection.id,
+                connectionName: connectionName,
+                accounts: next,
+                error: nil
+            )
+        } catch {
+            // Keep previous successful rows for this host if list fetch fails later.
+            if let previous, !previous.accounts.isEmpty {
+                return CLIProxyAccountGroup(
+                    connectionID: connection.id,
+                    connectionName: connectionName,
+                    accounts: previous.accounts,
+                    error: error.localizedDescription
+                )
+            }
+            return CLIProxyAccountGroup(
+                connectionID: connection.id,
+                connectionName: connectionName,
+                accounts: [],
+                error: error.localizedDescription
+            )
+        }
+    }
+
+    private func fetchAllSub2API(connections: [Sub2APIConnection]) async -> [Sub2APIUsageEntry] {
+        guard !connections.isEmpty else { return [] }
+
+        return await withTaskGroup(of: (Int, Sub2APIUsageEntry).self) { group in
+            for (index, connection) in connections.enumerated() {
+                let client = sub2APIClientFactory(connection)
+                group.addTask {
+                    do {
+                        let usage = try await client.fetchUsage()
+                        return (
+                            index,
+                            Sub2APIUsageEntry(
+                                connectionID: connection.id,
+                                connectionName: connection.displayName,
+                                usage: usage,
+                                error: nil
+                            )
+                        )
+                    } catch {
+                        return (
+                            index,
+                            Sub2APIUsageEntry(
+                                connectionID: connection.id,
+                                connectionName: connection.displayName,
+                                usage: nil,
+                                error: error.localizedDescription
+                            )
+                        )
+                    }
+                }
+            }
+
+            var results: [(Int, Sub2APIUsageEntry)] = []
+            for await item in group {
+                results.append(item)
+            }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+    }
+
     private func publishWidgetSnapshot(updatedAt: Date) {
+        let selectedCLI = Set(configuration.widgetCLIProxyConnectionIDs)
+        let selectedSub2 = Set(configuration.widgetSub2APIConnectionIDs)
+
+        // Preserve connection order, then each group's internal sort (default rules).
+        let widgetAccounts = accountGroups
+            .filter { selectedCLI.contains($0.connectionID) }
+            .flatMap(\.accounts)
+
+        let widgetSub2 = sub2APIEntries.filter { selectedSub2.contains($0.connectionID) }
+
         WidgetBridge.publish(
-            accounts: accounts,
-            sub2Usage: sub2APIUsage,
-            sub2Error: sub2APIError,
+            accounts: widgetAccounts,
+            sub2Entries: widgetSub2,
             globalError: globalError,
-            isConfigured: configuration.isConfigured || configuration.isSub2APIConfigured,
+            isConfigured: configuration.hasWidgetSelection,
             updatedAt: updatedAt
         )
     }
 
     private func restartAutoRefresh() {
         autoRefreshTask?.cancel()
-        guard configuration.isConfigured || configuration.isSub2APIConfigured else {
+        guard configuration.hasAnyDataSource else {
             autoRefreshTask = nil
             return
         }
@@ -245,6 +364,7 @@ final class QuotaStore: ObservableObject {
             }
         }
     }
+
     private func updateMenuTitle() {
         let remainingCandidates = accounts.compactMap { item -> Double? in
             if item.account.disabled || item.account.unavailable {

@@ -53,10 +53,14 @@ final class WidgetSnapshotTests: XCTestCase {
                     id: "1",
                     provider: "xai",
                     displayName: "you@x.ai",
+                    sourceName: "家里",
                     status: "active",
                     remainingPercent: 34,
                     periodEnd: Date(timeIntervalSince1970: 1_700_100_000)
                 )
+            ],
+            sub2Entries: [
+                WidgetSub2Entry(id: "s1", name: "主账户", balanceText: "$1.00", planName: "Pro")
             ],
             sub2BalanceText: "$1.00",
             sub2PlanName: "Pro"
@@ -66,8 +70,31 @@ final class WidgetSnapshotTests: XCTestCase {
         let decoded = try JSONDecoder().decode(WidgetSnapshot.self, from: data)
         XCTAssertEqual(decoded.accounts.count, 1)
         XCTAssertEqual(decoded.accounts[0].remainingPercent, 34)
+        XCTAssertEqual(decoded.accounts[0].sourceName, "家里")
         XCTAssertEqual(decoded.sub2BalanceText, "$1.00")
+        XCTAssertEqual(decoded.sub2Entries.count, 1)
+        XCTAssertEqual(decoded.sub2Entries[0].name, "主账户")
         XCTAssertEqual(decoded.tightestAccount?.displayName, "you@x.ai")
+    }
+
+    func testLegacySingleSub2FieldsMigrateIntoEntries() throws {
+        let legacy = """
+        {
+          "updatedAt": 1700000000,
+          "isConfigured": true,
+          "accounts": [],
+          "sub2BalanceText": "$2.50",
+          "sub2PlanName": "Lite",
+          "sub2Error": null
+        }
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let decoded = try decoder.decode(WidgetSnapshot.self, from: legacy)
+        XCTAssertEqual(decoded.sub2Entries.count, 1)
+        XCTAssertEqual(decoded.sub2Entries[0].balanceText, "$2.50")
+        XCTAssertEqual(decoded.primarySub2Entry?.planName, "Lite")
     }
 
     func testProviderResolve() {

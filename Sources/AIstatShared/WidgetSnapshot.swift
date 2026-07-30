@@ -6,6 +6,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var isConfigured: Bool
     public var globalError: String?
     public var accounts: [WidgetAccountEntry]
+    public var sub2Entries: [WidgetSub2Entry]
+    /// Legacy single Sub2 fields kept for decode compatibility with older host builds.
     public var sub2BalanceText: String?
     public var sub2PlanName: String?
     public var sub2Error: String?
@@ -15,6 +17,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         isConfigured: Bool = false,
         globalError: String? = nil,
         accounts: [WidgetAccountEntry] = [],
+        sub2Entries: [WidgetSub2Entry] = [],
         sub2BalanceText: String? = nil,
         sub2PlanName: String? = nil,
         sub2Error: String? = nil
@@ -23,12 +26,55 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.isConfigured = isConfigured
         self.globalError = globalError
         self.accounts = accounts
+        self.sub2Entries = sub2Entries
         self.sub2BalanceText = sub2BalanceText
         self.sub2PlanName = sub2PlanName
         self.sub2Error = sub2Error
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case updatedAt, isConfigured, globalError, accounts, sub2Entries
+        case sub2BalanceText, sub2PlanName, sub2Error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        isConfigured = try container.decodeIfPresent(Bool.self, forKey: .isConfigured) ?? false
+        globalError = try container.decodeIfPresent(String.self, forKey: .globalError)
+        accounts = try container.decodeIfPresent([WidgetAccountEntry].self, forKey: .accounts) ?? []
+        sub2Entries = try container.decodeIfPresent([WidgetSub2Entry].self, forKey: .sub2Entries) ?? []
+        sub2BalanceText = try container.decodeIfPresent(String.self, forKey: .sub2BalanceText)
+        sub2PlanName = try container.decodeIfPresent(String.self, forKey: .sub2PlanName)
+        sub2Error = try container.decodeIfPresent(String.self, forKey: .sub2Error)
+
+        // Migrate legacy single Sub2 fields into sub2Entries when needed.
+        if sub2Entries.isEmpty,
+           sub2BalanceText != nil || sub2PlanName != nil || sub2Error != nil {
+            sub2Entries = [
+                WidgetSub2Entry(
+                    id: "legacy",
+                    name: "Sub2API",
+                    balanceText: sub2BalanceText,
+                    planName: sub2PlanName,
+                    error: sub2Error
+                )
+            ]
+        }
+    }
+
     public static let empty = WidgetSnapshot()
+
+    /// Primary Sub2 row for compact chrome (first successful, else first error, else first).
+    public var primarySub2Entry: WidgetSub2Entry? {
+        if let ok = sub2Entries.first(where: { $0.balanceText != nil }) {
+            return ok
+        }
+        if let err = sub2Entries.first(where: { $0.error != nil }) {
+            return err
+        }
+        return sub2Entries.first
+    }
 
     /// Account with the lowest weekly remaining (active only). Mirrors menu-bar title logic.
     public var tightestAccount: WidgetAccountEntry? {
@@ -43,7 +89,34 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     public var hasAnyData: Bool {
-        !accounts.isEmpty || sub2BalanceText != nil || sub2Error != nil
+        !accounts.isEmpty || !sub2Entries.isEmpty
+    }
+}
+
+public struct WidgetSub2Entry: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var balanceText: String?
+    public var planName: String?
+    public var error: String?
+
+    public init(
+        id: String,
+        name: String,
+        balanceText: String? = nil,
+        planName: String? = nil,
+        error: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.balanceText = balanceText
+        self.planName = planName
+        self.error = error
+    }
+
+    public var displayLabel: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Sub2API" : trimmed
     }
 }
 
@@ -51,6 +124,8 @@ public struct WidgetAccountEntry: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var provider: String
     public var displayName: String
+    /// CLIProxyAPI connection name (optional for older snapshots).
+    public var sourceName: String?
     public var status: String
     public var remainingPercent: Double?
     public var periodEnd: Date?
@@ -62,6 +137,7 @@ public struct WidgetAccountEntry: Codable, Equatable, Identifiable, Sendable {
         id: String,
         provider: String,
         displayName: String,
+        sourceName: String? = nil,
         status: String,
         remainingPercent: Double? = nil,
         periodEnd: Date? = nil,
@@ -72,6 +148,7 @@ public struct WidgetAccountEntry: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.provider = provider
         self.displayName = displayName
+        self.sourceName = sourceName
         self.status = status
         self.remainingPercent = remainingPercent
         self.periodEnd = periodEnd

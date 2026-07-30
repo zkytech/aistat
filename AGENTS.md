@@ -45,8 +45,17 @@ Filter first version to `provider == "xai"` (Grok) accounts.
 - Sign with Apple Development identity when available (`package.sh` auto-detects)
 - UI families: systemSmall / systemMedium / systemLarge (list) + large-only dashboard rings (`QuotaDashboardWidget`)
 
+## Multi-connection config
+
+- `AppConfiguration` holds arrays: `cliProxyConnections` / `sub2APIConnections` (each with `id`, `name`, credentials).
+- Per CLIProxy connection: `preferNearRefreshAccounts` (priority write-back is host-local).
+- Menu bar groups subscription rows by CLIProxy connection name; Sub2 balances prefix the connection name.
+- Widget shows only IDs listed in `widgetCLIProxyConnectionIDs` / `widgetSub2APIConnectionIDs` (manual selection).
+- Legacy single-field config migrates to one named connection (`默认`) on load.
+
 ## Security
 
 - Never commit management keys.
 - Store config under Application Support or user defaults with local-only file.
 - Widget snapshot must stay privacy-safe (percentages / display names only).
+

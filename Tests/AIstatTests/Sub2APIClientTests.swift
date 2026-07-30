@@ -56,13 +56,10 @@ final class Sub2APIClientTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
         let session = URLSession(configuration: config)
-        let appConfig = AppConfiguration(
-            baseURL: "https://example.test",
-            managementKey: "test-key",
-            sub2APIBaseURL: "https://sub2api.example",
-            sub2APIKey: "test-sub2-key",
-            refreshIntervalSeconds: 300
+        return Sub2APIClient(
+            baseURL: "https://sub2api.example",
+            apiKey: "test-sub2-key",
+            session: session
         )
-        return Sub2APIClient(configuration: appConfig, session: session)
     }
 }

@@ -9,17 +9,17 @@ import WidgetKit
 enum WidgetBridge {
     static func publish(
         accounts: [AccountQuota],
-        sub2Usage: Sub2APIUsage?,
-        sub2Error: String?,
+        sub2Entries: [Sub2APIUsageEntry],
         globalError: String?,
         isConfigured: Bool,
         updatedAt: Date
     ) {
-        let entries = accounts.map { item -> WidgetAccountEntry in
+        let widgetAccounts = accounts.map { item -> WidgetAccountEntry in
             WidgetAccountEntry(
                 id: item.id,
                 provider: item.account.provider,
                 displayName: item.account.displayName,
+                sourceName: item.connectionName.isEmpty ? nil : item.connectionName,
                 status: AccountQuotaStatus.resolved(for: item),
                 remainingPercent: item.weekly?.remainingPercent,
                 periodEnd: item.weekly?.periodEnd,
@@ -29,23 +29,38 @@ enum WidgetBridge {
             )
         }
 
-        var balanceText: String?
-        var planName: String?
-        if let usage = sub2Usage {
-            if let balance = usage.availableBalance {
-                balanceText = formattedBalance(balance, unit: usage.unit)
+        let widgetSub2: [WidgetSub2Entry] = sub2Entries.map { entry in
+            var balanceText: String?
+            var planName: String?
+            if let usage = entry.usage {
+                if let balance = usage.availableBalance {
+                    balanceText = formattedBalance(balance, unit: usage.unit)
+                }
+                planName = usage.planName
             }
-            planName = usage.planName
+            return WidgetSub2Entry(
+                id: entry.connectionID,
+                name: entry.connectionName,
+                balanceText: balanceText,
+                planName: planName,
+                error: entry.error
+            )
         }
+
+        // Keep legacy single fields filled for older tooling / partial readers.
+        let primary = widgetSub2.first(where: { $0.balanceText != nil })
+            ?? widgetSub2.first(where: { $0.error != nil })
+            ?? widgetSub2.first
 
         let snapshot = WidgetSnapshot(
             updatedAt: updatedAt,
             isConfigured: isConfigured,
             globalError: globalError,
-            accounts: entries,
-            sub2BalanceText: balanceText,
-            sub2PlanName: planName,
-            sub2Error: sub2Error
+            accounts: widgetAccounts,
+            sub2Entries: widgetSub2,
+            sub2BalanceText: primary?.balanceText,
+            sub2PlanName: primary?.planName,
+            sub2Error: primary?.error
         )
 
         do {

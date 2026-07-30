@@ -61,8 +61,8 @@ struct SmallQuotaWidgetView: View {
     var body: some View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
-                title: "未配置",
-                message: "打开 AIstat 设置数据源"
+                title: "未选择展示源",
+                message: "设置 → 通用中勾选小组件账号"
             )
         } else if let account = entry.snapshot.tightestAccount ?? entry.snapshot.accounts.first {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceSM) {
@@ -152,7 +152,10 @@ struct MediumQuotaWidgetView: View {
 
     var body: some View {
         if !entry.snapshot.isConfigured {
-            emptyChrome(title: "未配置", message: "打开 AIstat → 设置，填写 CLIProxyAPI 或 Sub2API")
+            emptyChrome(
+                title: "未选择展示源",
+                message: "打开 AIstat → 设置 → 通用，勾选要在小组件中展示的账号"
+            )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceSM) {
                 headerStrip
@@ -191,28 +194,7 @@ struct MediumQuotaWidgetView: View {
                 .foregroundStyle(.tertiary)
                 .accessibilityLabel("展示 \(rows.count) / \(entry.snapshot.accounts.count) 个账号")
 
-            if let err = entry.snapshot.sub2Error {
-                Text("Sub2 错误")
-                    .font(WidgetTheme.captionFont())
-                    .foregroundStyle(WidgetTheme.statusCritical)
-                    .help(err)
-            } else if let balance = entry.snapshot.sub2BalanceText {
-                HStack(spacing: 4) {
-                    Image(systemName: "creditcard")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    if let plan = entry.snapshot.sub2PlanName, !plan.isEmpty {
-                        Text(plan)
-                            .font(WidgetTheme.captionFont())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Text(balance)
-                        .font(WidgetTheme.monoCaption())
-                        .foregroundStyle(.primary)
-                }
-                .accessibilityLabel("Sub2API 余额 \(balance)")
-            }
+            MediumSub2Strip(entries: entry.snapshot.sub2Entries)
 
             Text(updatedCaption)
                 .font(WidgetTheme.monoSmall())
@@ -240,11 +222,12 @@ struct LargeQuotaWidgetView: View {
         )
     }
 
+
     var body: some View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
-                title: "尚未配置数据源",
-                message: "在菜单栏打开 AIstat → 设置，填写 CLIProxyAPI 或 Sub2API 后，小组件会自动同步额度。"
+                title: "未选择展示源",
+                message: "在菜单栏打开 AIstat → 设置 → 通用，勾选要在小组件中展示的 CLIProxyAPI / Sub2API 账号。"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceMD) {
@@ -254,7 +237,7 @@ struct LargeQuotaWidgetView: View {
                     emptyInline(title: "无法加载账号", message: globalError)
                     Spacer(minLength: 0)
                 } else if rows.isEmpty {
-                    emptyInline(title: "暂无 OpenAI / Claude / Grok 账号", message: "确认 CLIProxyAPI 已登录对应账号后刷新。")
+                    emptyInline(title: "暂无 OpenAI / Claude / Grok 账号", message: "确认已勾选的 CLIProxyAPI 已登录对应账号后刷新。")
                     Spacer(minLength: 0)
                 } else {
                     VStack(spacing: WidgetTheme.spaceSM) {
@@ -360,8 +343,8 @@ struct LargeDashboardQuotaWidgetView: View {
     var body: some View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
-                title: "尚未配置数据源",
-                message: "在菜单栏打开 AIstat → 设置，填写 CLIProxyAPI 或 Sub2API 后，小组件会自动同步额度。"
+                title: "未选择展示源",
+                message: "在菜单栏打开 AIstat → 设置 → 通用，勾选要在小组件中展示的 CLIProxyAPI / Sub2API 账号。"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceLG) {
@@ -417,26 +400,140 @@ struct LargeDashboardQuotaWidgetView: View {
 
 // MARK: - Shared large chrome (list + dashboard)
 
-private enum LargeWidgetChrome {
+/// Compact Sub2 strip for medium widget header (up to 2 balances).
+private struct MediumSub2Strip: View {
+    let entries: [WidgetSub2Entry]
+
+    var body: some View {
+        if entries.isEmpty {
+            EmptyView()
+        } else if entries.count == 1, let entry = entries.first {
+            single(entry)
+        } else {
+            HStack(spacing: 6) {
+                ForEach(entries.prefix(2)) { entry in
+                    single(entry)
+                }
+                if entries.count > 2 {
+                    Text("+\(entries.count - 2)")
+                        .font(WidgetTheme.captionFont())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
     @ViewBuilder
-    static func sub2Badge(snapshot: WidgetSnapshot) -> some View {
-        if let err = snapshot.sub2Error {
-            Label("Sub2 错误", systemImage: "exclamationmark.triangle.fill")
+    private func single(_ entry: WidgetSub2Entry) -> some View {
+        if let err = entry.error {
+            Text("\(entry.displayLabel) 错误")
                 .font(WidgetTheme.captionFont())
                 .foregroundStyle(WidgetTheme.statusCritical)
                 .help(err)
-        } else if let balance = snapshot.sub2BalanceText {
+                .lineLimit(1)
+        } else if let balance = entry.balanceText {
+            HStack(spacing: 3) {
+                Image(systemName: "creditcard")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(entry.displayLabel)
+                    .font(WidgetTheme.captionFont())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(balance)
+                    .font(WidgetTheme.monoCaption())
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .accessibilityLabel("\(entry.displayLabel) 余额 \(balance)")
+        }
+    }
+}
+
+private enum LargeWidgetChrome {
+    @ViewBuilder
+    static func sub2Badge(snapshot: WidgetSnapshot) -> some View {
+        let entries = snapshot.sub2Entries
+        if entries.isEmpty {
+            // Fallback for legacy snapshots without sub2Entries.
+            if let err = snapshot.sub2Error {
+                Label("Sub2 错误", systemImage: "exclamationmark.triangle.fill")
+                    .font(WidgetTheme.captionFont())
+                    .foregroundStyle(WidgetTheme.statusCritical)
+                    .help(err)
+            } else if let balance = snapshot.sub2BalanceText {
+                legacyBadge(balance: balance, planName: snapshot.sub2PlanName)
+            }
+        } else if entries.count == 1, let entry = entries.first {
+            singleBadge(entry)
+        } else {
+            VStack(alignment: .trailing, spacing: 3) {
+                ForEach(entries.prefix(3)) { entry in
+                    multiRow(entry)
+                }
+                if entries.count > 3 {
+                    Text("+\(entries.count - 3)")
+                        .font(WidgetTheme.captionFont())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private static func singleBadge(_ entry: WidgetSub2Entry) -> some View {
+        if let err = entry.error {
+            Label("\(entry.displayLabel) 错误", systemImage: "exclamationmark.triangle.fill")
+                .font(WidgetTheme.captionFont())
+                .foregroundStyle(WidgetTheme.statusCritical)
+                .help(err)
+        } else if let balance = entry.balanceText {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(balance)
                     .font(WidgetTheme.kpiFont(size: 18))
-                Text(snapshot.sub2PlanName?.isEmpty == false ? snapshot.sub2PlanName! : "Sub2API")
+                Text(entry.displayLabel)
                     .font(WidgetTheme.captionFont())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Sub2API \(balance)")
+            .accessibilityLabel("\(entry.displayLabel) \(balance)")
         }
+    }
+
+    @ViewBuilder
+    private static func multiRow(_ entry: WidgetSub2Entry) -> some View {
+        if let err = entry.error {
+            Text("\(entry.displayLabel)：错误")
+                .font(WidgetTheme.captionFont())
+                .foregroundStyle(WidgetTheme.statusCritical)
+                .help(err)
+                .lineLimit(1)
+        } else if let balance = entry.balanceText {
+            HStack(spacing: 4) {
+                Text(entry.displayLabel)
+                    .font(WidgetTheme.captionFont())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(balance)
+                    .font(WidgetTheme.monoCaption())
+                    .lineLimit(1)
+            }
+            .accessibilityLabel("\(entry.displayLabel) \(balance)")
+        }
+    }
+
+    private static func legacyBadge(balance: String, planName: String?) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(balance)
+                .font(WidgetTheme.kpiFont(size: 18))
+            Text(planName?.isEmpty == false ? planName! : "Sub2API")
+                .font(WidgetTheme.captionFont())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sub2API \(balance)")
     }
 
     static func footer(updatedAt: Date) -> some View {

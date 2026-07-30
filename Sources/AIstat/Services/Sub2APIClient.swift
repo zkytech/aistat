@@ -31,11 +31,21 @@ struct Sub2APIClient: Sub2APIClientProtocol {
     static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    private let configuration: AppConfiguration
+    private let baseURL: String
+    private let apiKey: String
     private let session: URLSession
 
-    init(configuration: AppConfiguration, session: URLSession = .shared) {
-        self.configuration = configuration
+    init(connection: Sub2APIConnection, session: URLSession = .shared) {
+        self.baseURL = connection.normalizedBaseURL
+        self.apiKey = connection.normalizedAPIKey
+        self.session = session
+    }
+
+    init(baseURL: String, apiKey: String, session: URLSession = .shared) {
+        self.baseURL = baseURL
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.session = session
     }
 
@@ -50,18 +60,17 @@ struct Sub2APIClient: Sub2APIClientProtocol {
     }
 
     private func makeRequest(path: String, method: String) throws -> URLRequest {
-        guard configuration.isSub2APIConfigured else {
+        guard !baseURL.isEmpty, !apiKey.isEmpty else {
             throw Sub2APIClientError.notConfigured
         }
 
-        let base = configuration.normalizedSub2APIBaseURL
-        guard let url = URL(string: base + path) else {
-            throw Sub2APIClientError.invalidBaseURL(base)
+        guard let url = URL(string: baseURL + path) else {
+            throw Sub2APIClientError.invalidBaseURL(baseURL)
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("Bearer \(configuration.normalizedSub2APIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         return request

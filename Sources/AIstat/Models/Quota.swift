@@ -133,12 +133,17 @@ struct Sub2APISubscription: Decodable, Sendable, Equatable {
 }
 
 struct AccountQuota: Identifiable, Sendable, Equatable {
+    /// Owning CLIProxyAPI connection id (unique across multi-host configs).
+    let connectionID: String
+    /// User-facing CLIProxyAPI connection name for grouping / display.
+    let connectionName: String
     let account: AuthAccount
     var weekly: WeeklyQuota?
     var monthly: MonthlyQuota?
     var errorMessage: String?
 
-    var id: String { account.id }
+    /// Stable across hosts: connection + auth index (authIndex alone can collide).
+    var id: String { "\(connectionID):\(account.authIndex)" }
 
     var isUnavailable: Bool {
         account.disabled || account.unavailable || weekly?.isExhausted == true
@@ -149,6 +154,42 @@ struct AccountQuota: Identifiable, Sendable, Equatable {
         guard let periodEnd = weekly?.periodEnd else { return nil }
         return abs(periodEnd.timeIntervalSince(now))
     }
+
+    init(
+        connectionID: String = "",
+        connectionName: String = "",
+        account: AuthAccount,
+        weekly: WeeklyQuota? = nil,
+        monthly: MonthlyQuota? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.connectionID = connectionID
+        self.connectionName = connectionName
+        self.account = account
+        self.weekly = weekly
+        self.monthly = monthly
+        self.errorMessage = errorMessage
+    }
+}
+
+/// One CLIProxyAPI host and its subscription rows (menu-bar section).
+struct CLIProxyAccountGroup: Identifiable, Sendable, Equatable {
+    let connectionID: String
+    let connectionName: String
+    var accounts: [AccountQuota]
+    var error: String?
+
+    var id: String { connectionID }
+}
+
+/// One Sub2API host usage result.
+struct Sub2APIUsageEntry: Identifiable, Sendable, Equatable {
+    let connectionID: String
+    let connectionName: String
+    var usage: Sub2APIUsage?
+    var error: String?
+
+    var id: String { connectionID }
 }
 
 enum DisplayDateFormatter {

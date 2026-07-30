@@ -44,11 +44,21 @@ struct CLIProxyClient: CLIProxyClientProtocol {
     static let codexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
     static let claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
 
-    private let configuration: AppConfiguration
+    private let baseURL: String
+    private let managementKey: String
     private let session: URLSession
 
-    init(configuration: AppConfiguration, session: URLSession = .shared) {
-        self.configuration = configuration
+    init(connection: CLIProxyConnection, session: URLSession = .shared) {
+        self.baseURL = connection.normalizedBaseURL
+        self.managementKey = connection.normalizedManagementKey
+        self.session = session
+    }
+
+    init(baseURL: String, managementKey: String, session: URLSession = .shared) {
+        self.baseURL = baseURL
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        self.managementKey = managementKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.session = session
     }
 
@@ -246,18 +256,17 @@ struct CLIProxyClient: CLIProxyClientProtocol {
     }
 
     private func makeManagementRequest(path: String, method: String, body: Data?) throws -> URLRequest {
-        guard configuration.isConfigured else {
+        guard !baseURL.isEmpty, !managementKey.isEmpty else {
             throw CLIProxyClientError.notConfigured
         }
 
-        let base = configuration.normalizedBaseURL
-        guard let url = URL(string: base + path) else {
-            throw CLIProxyClientError.invalidBaseURL(base)
+        guard let url = URL(string: baseURL + path) else {
+            throw CLIProxyClientError.invalidBaseURL(baseURL)
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("Bearer \(configuration.normalizedManagementKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(managementKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Self.managementUserAgent, forHTTPHeaderField: "User-Agent")
         if let body {

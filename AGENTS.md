@@ -33,7 +33,20 @@ Auth header: `Authorization: Bearer <management_key>` (also accepts `X-Managemen
 
 Filter first version to `provider == "xai"` (Grok) accounts.
 
+## Desktop Widgets (WidgetKit)
+
+- Extension product: `aistat-widget` → packaged as `AIstat.app/Contents/PlugIns/AIstatWidget.appex`
+- Shared snapshot models live in `AIstatShared` (`WidgetSnapshot`, `WidgetDataStore`)
+- Main app publishes after each refresh via `WidgetBridge` (no secrets in snapshot)
+- Widget entitlements **must** include `com.apple.security.app-sandbox` or `pluginkit` ignores the extension
+- Do **not** declare App Groups without a real provisioning profile (chronod hangs on descriptor fetch)
+- Host (unsandboxed) writes snapshot into the widget container:
+  `~/Library/Containers/app.aistat.widget/Data/Library/Application Support/aistat/widget-snapshot.json`
+- Sign with Apple Development identity when available (`package.sh` auto-detects)
+- UI families: systemSmall / systemMedium / systemLarge (list) + large-only dashboard rings (`QuotaDashboardWidget`)
+
 ## Security
 
 - Never commit management keys.
 - Store config under Application Support or user defaults with local-only file.
+- Widget snapshot must stay privacy-safe (percentages / display names only).

@@ -1,4 +1,5 @@
 import SwiftUI
+import AIstatShared
 
 struct AccountQuotaRow: View {
     let item: AccountQuota
@@ -441,32 +442,6 @@ enum AccountQuotaStatus {
 enum RelativeResetFormatter {
     /// Compact countdown for the account list, e.g. `2天4时`, `3时12分`, `45分`.
     static func string(until date: Date, now: Date = Date()) -> String {
-        let seconds = date.timeIntervalSince(now)
-        if seconds <= 0 {
-            return "已到期"
-        }
-
-        let totalMinutes = Int(seconds.rounded(.down)) / 60
-        if totalMinutes < 1 {
-            return "即将重置"
-        }
-
-        let days = totalMinutes / (60 * 24)
-        let hours = (totalMinutes % (60 * 24)) / 60
-        let minutes = totalMinutes % 60
-
-        if days > 0 {
-            if hours > 0 {
-                return "\(days)天\(hours)时"
-            }
-            return "\(days)天"
-        }
-        if hours > 0 {
-            if minutes > 0 {
-                return "\(hours)时\(minutes)分"
-            }
-            return "\(hours)时"
-        }
-        return "\(minutes)分"
+        WidgetResetFormatter.string(until: date, now: now)
     }
 }

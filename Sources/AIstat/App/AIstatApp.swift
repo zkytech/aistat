@@ -5,35 +5,47 @@ import SwiftUI
 struct AIstatApp: App {
     static let settingsWindowID = "settings"
 
-    @StateObject private var store = QuotaStore()
+    @NSApplicationDelegateAdaptor(AIstatAppDelegate.self) private var appDelegate
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContentView(store: store)
+            MenuBarContentView(store: appDelegate.store)
                 .onAppear {
-                    store.start()
+                    appDelegate.store.start()
                 }
         } label: {
-            Label {
-                Text(store.menuTitle)
-            } icon: {
-                Image(nsImage: Self.menuBarIcon)
-            }
+            // Observe store so the menu title stays live.
+            MenuBarLabelView(store: appDelegate.store)
         }
         .menuBarExtraStyle(.window)
 
         Window("设置", id: Self.settingsWindowID) {
-            SettingsView(store: store)
+            SettingsView(store: appDelegate.store)
         }
         .defaultSize(width: 820, height: 620)
 
         // Keep system Settings entry as a secondary path.
         Settings {
-            SettingsView(store: store)
+            SettingsView(store: appDelegate.store)
         }
     }
+}
 
-    private static let menuBarIcon: NSImage = {
+/// Isolates `@ObservedObject` so the menu bar title refreshes with quota changes.
+private struct MenuBarLabelView: View {
+    @ObservedObject var store: QuotaStore
+
+    var body: some View {
+        Label {
+            Text(store.menuTitle)
+        } icon: {
+            Image(nsImage: AIstatApp.menuBarIcon)
+        }
+    }
+}
+
+extension AIstatApp {
+    static let menuBarIcon: NSImage = {
         let fallback = NSImage(
             systemSymbolName: "chart.bar.fill",
             accessibilityDescription: "AIstat"

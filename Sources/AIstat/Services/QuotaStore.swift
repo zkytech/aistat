@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import AIstatShared
 
 @MainActor
 final class QuotaStore: ObservableObject {
@@ -111,6 +112,7 @@ final class QuotaStore: ObservableObject {
             sub2APIUsage = nil
             sub2APIError = nil
             updateMenuTitle()
+            publishWidgetSnapshot(updatedAt: nowProvider())
             return
         }
 
@@ -212,6 +214,19 @@ final class QuotaStore: ObservableObject {
             sub2APIUsage = nil
             sub2APIError = nil
         }
+
+        publishWidgetSnapshot(updatedAt: lastRefreshAt ?? nowProvider())
+    }
+
+    private func publishWidgetSnapshot(updatedAt: Date) {
+        WidgetBridge.publish(
+            accounts: accounts,
+            sub2Usage: sub2APIUsage,
+            sub2Error: sub2APIError,
+            globalError: globalError,
+            isConfigured: configuration.isConfigured || configuration.isSub2APIConfigured,
+            updatedAt: updatedAt
+        )
     }
 
     private func restartAutoRefresh() {

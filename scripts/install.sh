@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a release binary and install it as a local macOS menu bar app.
+# Build a release binary and install it as a local macOS menu bar app (with widgets).
 #
 # Usage:
 #   ./scripts/install.sh              # build, install, launch
@@ -12,14 +12,8 @@
 #     Contents/
 #       Info.plist
 #       MacOS/aistat
-#       Resources/
-#         MenuBarIconTemplate.png
-#         MenuBarIconTemplate@2x.png
-#
-# Note: SPM's Bundle.module looks at `.app/aistat_AIstat.bundle`,
-# but codesign forbids unsealed files at the .app root. The app therefore loads
-# icons via Bundle.main first (packaged install) and falls back to Bundle.module
-# for `swift run` / local .build launches.
+#       PlugIns/AIstatWidget.appex/
+#       Resources/...
 
 set -euo pipefail
 
@@ -28,19 +22,10 @@ APP_PATH="${HOME}/Applications/AIstat.app"
 DO_LAUNCH=1
 CONFIGURATION=release
 PRODUCT_NAME="aistat"
-BUNDLE_ID="app.aistat"
 DISPLAY_NAME="AIstat"
-VERSION="0.1.0"
-BUILD_NUMBER="1"
-RESOURCE_BUNDLE_NAME="aistat_AIstat.bundle"
-ICON_NAMES=(
-  "MenuBarIconTemplate.png"
-  "MenuBarIconTemplate@2x.png"
-  "ProviderIcon-openai.png"
-  "ProviderIcon-claude.png"
-  "ProviderIcon-grok.png"
-)
-APP_ICON_ICNS="AppIcon.icns"
+BUNDLE_ID="app.aistat"
+WIDGET_BUNDLE_ID="app.aistat.widget"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 usage() {
   cat <<'EOF'
@@ -87,155 +72,105 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
-require_cmd swift
-require_cmd codesign
-require_cmd plutil
 require_cmd open
 require_cmd pkill
 require_cmd ditto
+require_cmd mktemp
+require_cmd plutil
+require_cmd pluginkit
+[[ -x "$LSREGISTER" ]] || die "missing LaunchServices registration tool: $LSREGISTER"
+
+bundle_identifier() {
+  plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null || true
+}
+
+unregister_app() {
+  local app="$1"
+  local appex="$app/Contents/PlugIns/AIstatWidget.appex"
+
+  if [[ -d "$appex" ]]; then
+    pluginkit -r "$appex" >/dev/null 2>&1 || true
+  fi
+  "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+}
+
+trash_duplicate_install() {
+  local app="$1"
+  local trash_path
+
+  [[ -d "$app" ]] || return 0
+  [[ "$(bundle_identifier "$app")" == "$BUNDLE_ID" ]] || return 0
+
+  unregister_app "$app"
+  mkdir -p "$HOME/.Trash"
+  trash_path="$HOME/.Trash/${DISPLAY_NAME}-duplicate-$(date +%Y%m%d%H%M%S).app"
+  log "Moving duplicate install to Trash: $app"
+  mv "$app" "$trash_path"
+}
 
 cd "$ROOT"
 
-log "Building ($CONFIGURATION)"
-swift build -c "$CONFIGURATION" --product "$PRODUCT_NAME"
-
-TRIPLE="$(swift -print-target-info 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin)["target"]["triple"])' 2>/dev/null || true)"
-CANDIDATES=(
-  "$ROOT/.build/$CONFIGURATION/$PRODUCT_NAME"
-  "$ROOT/.build/${TRIPLE:-}/$CONFIGURATION/$PRODUCT_NAME"
-  "$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/$PRODUCT_NAME"
-)
-BIN_SRC=""
-for cand in "${CANDIDATES[@]}"; do
-  if [[ -n "$cand" && -x "$cand" ]]; then
-    BIN_SRC="$cand"
-    break
-  fi
-done
-if [[ -z "$BIN_SRC" ]]; then
-  BIN_SRC="$(find "$ROOT/.build" -type f -name "$PRODUCT_NAME" -path "*/$CONFIGURATION/*" | head -n 1 || true)"
-fi
-[[ -n "$BIN_SRC" && -x "$BIN_SRC" ]] || die "built binary not found for configuration=$CONFIGURATION"
-
-BUNDLE_CANDIDATES=(
-  "$ROOT/.build/$CONFIGURATION/$RESOURCE_BUNDLE_NAME"
-  "$ROOT/.build/${TRIPLE:-}/$CONFIGURATION/$RESOURCE_BUNDLE_NAME"
-  "$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/$RESOURCE_BUNDLE_NAME"
-)
-BUNDLE_SRC=""
-for cand in "${BUNDLE_CANDIDATES[@]}"; do
-  if [[ -n "$cand" && -d "$cand" ]]; then
-    BUNDLE_SRC="$cand"
-    break
-  fi
-done
-if [[ -z "$BUNDLE_SRC" ]]; then
-  BUNDLE_SRC="$(find "$ROOT/.build" -type d -name "$RESOURCE_BUNDLE_NAME" -path "*/$CONFIGURATION/*" | head -n 1 || true)"
+PACKAGE_ARGS=(--app-name "$DISPLAY_NAME")
+if [[ "$CONFIGURATION" == "debug" ]]; then
+  PACKAGE_ARGS+=(--debug)
 fi
 
-SOURCE_ICON_DIR="$ROOT/Sources/AIstat/Resources"
+TMP_OUT="$(mktemp -d "${TMPDIR:-/tmp}/aistat-install.XXXXXX")"
+cleanup() { rm -rf "$TMP_OUT"; }
+trap cleanup EXIT
+
+log "Packaging via scripts/package.sh → $TMP_OUT"
+"$ROOT/scripts/package.sh" --out "$TMP_OUT" "${PACKAGE_ARGS[@]}"
+
+BUILT_APP="$TMP_OUT/${DISPLAY_NAME}.app"
+[[ -d "$BUILT_APP" ]] || die "package.sh did not produce $BUILT_APP"
 
 log "Stopping existing instances"
 pkill -f "$APP_PATH/Contents/MacOS/$PRODUCT_NAME" 2>/dev/null || true
 pkill -f "$ROOT/.build/.*/$PRODUCT_NAME" 2>/dev/null || true
 sleep 0.3
 
-log "Assembling app bundle at: $APP_PATH"
-APP_CONTENTS="$APP_PATH/Contents"
-APP_MACOS="$APP_CONTENTS/MacOS"
-APP_RESOURCES="$APP_CONTENTS/Resources"
-BIN_DST="$APP_MACOS/$PRODUCT_NAME"
-INFO_PLIST="$APP_CONTENTS/Info.plist"
-
-mkdir -p "$APP_MACOS" "$APP_RESOURCES"
-
-# Binary
-ditto "$BIN_SRC" "$BIN_DST"
-chmod +x "$BIN_DST"
-
-# Clean placements that break codesign or confuse Bundle.main.
-rm -rf "$APP_PATH/$RESOURCE_BUNDLE_NAME"
-rm -rf "$APP_CONTENTS/$RESOURCE_BUNDLE_NAME"
-rm -rf "$APP_MACOS/$RESOURCE_BUNDLE_NAME"
-rm -rf "$APP_RESOURCES/$RESOURCE_BUNDLE_NAME"
-
-# Install plain icons under Contents/Resources for Bundle.main.
-installed_icons=0
-for icon in "${ICON_NAMES[@]}"; do
-  src=""
-  if [[ -n "$BUNDLE_SRC" && -f "$BUNDLE_SRC/$icon" ]]; then
-    src="$BUNDLE_SRC/$icon"
-  elif [[ -f "$SOURCE_ICON_DIR/$icon" ]]; then
-    src="$SOURCE_ICON_DIR/$icon"
-  fi
-  if [[ -n "$src" ]]; then
-    ditto "$src" "$APP_RESOURCES/$icon"
-    installed_icons=$((installed_icons + 1))
-  else
-    echo "warning: missing icon $icon" >&2
-  fi
-done
-[[ "$installed_icons" -gt 0 ]] || die "no menu bar icons found to install"
-
-# App icon (.icns) for Finder / About / Force Quit.
-if [[ -f "$SOURCE_ICON_DIR/$APP_ICON_ICNS" ]]; then
-  ditto "$SOURCE_ICON_DIR/$APP_ICON_ICNS" "$APP_RESOURCES/$APP_ICON_ICNS"
-  log "Installed app icon: $APP_ICON_ICNS"
-else
-  echo "warning: missing $APP_ICON_ICNS (app will use default generic icon)" >&2
+# WidgetKit may ignore an extension when multiple app copies with the same
+# bundle identifiers are registered. Keep exactly one standard installation.
+if [[ "$APP_PATH" != "/Applications/${DISPLAY_NAME}.app" ]]; then
+  trash_duplicate_install "/Applications/${DISPLAY_NAME}.app"
+fi
+if [[ "$APP_PATH" != "${HOME}/Applications/${DISPLAY_NAME}.app" ]]; then
+  trash_duplicate_install "${HOME}/Applications/${DISPLAY_NAME}.app"
 fi
 
-# Always rewrite Info.plist so icon / version keys stay in sync with this script.
-cat > "$INFO_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
-	<key>CFBundleDisplayName</key>
-	<string>${DISPLAY_NAME}</string>
-	<key>CFBundleExecutable</key>
-	<string>${PRODUCT_NAME}</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleIdentifier</key>
-	<string>${BUNDLE_ID}</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>${DISPLAY_NAME}</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>${VERSION}</string>
-	<key>CFBundleVersion</key>
-	<string>${BUILD_NUMBER}</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
-	<key>LSUIElement</key>
-	<true/>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-</dict>
-</plist>
-PLIST
-plutil -lint "$INFO_PLIST" >/dev/null
+if [[ -d "$APP_PATH" ]]; then
+  unregister_app "$APP_PATH"
+fi
 
-rm -rf "$APP_CONTENTS/_CodeSignature"
+log "Installing to $APP_PATH"
+mkdir -p "$(dirname "$APP_PATH")"
+rm -rf "$APP_PATH"
+ditto "$BUILT_APP" "$APP_PATH"
 
-log "Ad-hoc codesign"
-codesign --force --deep --sign - "$APP_PATH"
-codesign --verify --deep --strict "$APP_PATH"
-codesign -dv --verbose=2 "$APP_PATH" 2>&1 | sed -n '1,12p'
+INSTALLED_APPEX="$APP_PATH/Contents/PlugIns/AIstatWidget.appex"
+[[ "$(bundle_identifier "$APP_PATH")" == "$BUNDLE_ID" ]] || die "installed app has an unexpected bundle identifier"
+[[ "$(bundle_identifier "$INSTALLED_APPEX")" == "$WIDGET_BUNDLE_ID" ]] || die "installed widget has an unexpected bundle identifier"
+
+log "Registering final app and widget extension"
+"$LSREGISTER" -f "$APP_PATH"
+pluginkit -a "$INSTALLED_APPEX"
+"$LSREGISTER" -gc >/dev/null 2>&1 || true
+
+# Force WidgetKit's descriptor cache and desktop gallery to re-read the final
+# extension path after replacing or de-duplicating an installation.
+killall chronod 2>/dev/null || true
+killall Dock 2>/dev/null || true
+sleep 2
+
+REGISTERED_WIDGET="$(pluginkit -mAvvv -i "$WIDGET_BUNDLE_ID" 2>/dev/null || true)"
+if [[ "$REGISTERED_WIDGET" != *"Path = $INSTALLED_APPEX"* ]]; then
+  printf '%s\n' "$REGISTERED_WIDGET" >&2
+  die "WidgetKit extension did not register from the final install path"
+fi
 
 log "Installed layout"
-printf '  binary : %s\n' "$BIN_DST"
-printf '  icons  : %s\n' "$APP_RESOURCES"
-printf '  plist  : %s\n' "$INFO_PLIST"
-find "$APP_PATH" -maxdepth 4 \( -type f -o -type d \) | sort | sed 's/^/  /'
+find "$APP_PATH" -maxdepth 5 \( -type f -o -type d \) | sort | sed 's/^/  /'
 
 if [[ "$DO_LAUNCH" -eq 1 ]]; then
   log "Launching"

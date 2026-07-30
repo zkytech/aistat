@@ -43,6 +43,18 @@ private enum SettingsPlatform: String, CaseIterable, Identifiable {
     }
 }
 
+private enum SettingsPane: Hashable {
+    case platform(SettingsPlatform)
+    case general
+
+    var title: String {
+        switch self {
+        case .platform(let platform): return platform.title
+        case .general: return "通用"
+        }
+    }
+}
+
 /// Colored brand icon for settings data sources (CLIProxyAPI / Sub2API).
 private struct PlatformIconView: View {
     let platform: SettingsPlatform
@@ -85,13 +97,15 @@ private struct PlatformIconView: View {
 struct SettingsView: View {
     @ObservedObject var store: QuotaStore
 
-    @State private var selectedPlatform: SettingsPlatform = .cliproxyapi
+    @State private var selectedPane: SettingsPane = .platform(.cliproxyapi)
     @State private var baseURL: String = ""
     @State private var managementKey: String = ""
     @State private var sub2APIBaseURL: String = ""
     @State private var sub2APIKey: String = ""
     @State private var refreshIntervalSeconds: Int = AppConfiguration.defaultRefreshIntervalSeconds
     @State private var preferNearRefreshAccounts: Bool = false
+    @State private var launchAtLoginEnabled: Bool = false
+    @State private var launchAtLoginHint: String?
     @State private var statusMessage: String?
     @State private var isError = false
     @State private var isSaving = false
@@ -100,7 +114,7 @@ struct SettingsView: View {
 
     var body: some View {
         HSplitView {
-            platformSidebar
+            settingsSidebar
                 .frame(minWidth: 210, idealWidth: 220, maxWidth: 240)
 
             detailPane
@@ -110,54 +124,45 @@ struct SettingsView: View {
         .onAppear(perform: loadFromStore)
     }
 
-    private var platformSidebar: some View {
+    private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("数据源")
-                    .font(.headline)
-                Text("选择要配置的服务")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 20)
-            .padding(.bottom, 14)
+            sidebarSectionHeader(title: "数据源", subtitle: "选择要配置的服务")
+                .padding(.top, 20)
+                .padding(.bottom, 14)
 
             VStack(spacing: 6) {
                 ForEach(SettingsPlatform.allCases) { platform in
-                    Button {
-                        selectedPlatform = platform
-                    } label: {
-                        HStack(spacing: 12) {
-                            PlatformIconView(platform: platform, size: 28)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(platform.title)
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text(platform.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Spacer(minLength: 0)
-
-                            if isPlatformConfigured(platform) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                    .accessibilityLabel("已配置")
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(selectedPlatform == platform ? Color.accentColor.opacity(0.14) : Color.clear)
-                        )
+                    sidebarRow(
+                        pane: .platform(platform),
+                        title: platform.title,
+                        subtitle: platform.subtitle,
+                        trailingConfigured: isPlatformConfigured(platform)
+                    ) {
+                        PlatformIconView(platform: platform, size: 28)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(platform.title)，\(platform.subtitle)")
-                    .accessibilityAddTraits(selectedPlatform == platform ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal, 10)
+
+            sidebarSectionHeader(title: "应用", subtitle: "与数据源无关的选项")
+                .padding(.top, 22)
+                .padding(.bottom, 10)
+
+            VStack(spacing: 6) {
+                sidebarRow(
+                    pane: .general,
+                    title: "通用",
+                    subtitle: "刷新与启动"
+                ) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.12))
+                        )
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 10)
@@ -172,15 +177,70 @@ struct SettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    private func sidebarSectionHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private func sidebarRow<Icon: View>(
+        pane: SettingsPane,
+        title: String,
+        subtitle: String,
+        trailingConfigured: Bool = false,
+        @ViewBuilder icon: () -> Icon
+    ) -> some View {
+        let selected = selectedPane == pane
+        return Button {
+            selectedPane = pane
+        } label: {
+            HStack(spacing: 12) {
+                icon()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if trailingConfigured {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .accessibilityLabel("已配置")
+                }
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 12)
+            .frame(minHeight: 50)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? Color.accentColor.opacity(0.14) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title)，\(subtitle)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
     private var detailPane: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    detailHeader
-                    connectionSection
-                    dataSourceNotesSection
-                    refreshSection
-                    configurationFileSection
+                    switch selectedPane {
+                    case .platform(let platform):
+                        platformDetail(platform)
+                    case .general:
+                        generalDetail
+                    }
                 }
                 .frame(maxWidth: 680, alignment: .leading)
                 .padding(.horizontal, 28)
@@ -194,17 +254,33 @@ struct SettingsView: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private var detailHeader: some View {
+    @ViewBuilder
+    private func platformDetail(_ platform: SettingsPlatform) -> some View {
+        platformHeader(platform)
+        connectionSection(for: platform)
+        dataSourceNotesSection(for: platform)
+    }
+
+    private var generalDetail: some View {
+        Group {
+            generalHeader
+            refreshSection
+            launchAtLoginSection
+            configurationFileSection
+        }
+    }
+
+    private func platformHeader(_ platform: SettingsPlatform) -> some View {
         HStack(alignment: .top, spacing: 14) {
-            PlatformIconView(platform: selectedPlatform, size: 44, cornerRadius: 10)
+            PlatformIconView(platform: platform, size: 44, cornerRadius: 10)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
-                    Text(selectedPlatform.title)
+                    Text(platform.title)
                         .font(.title2.weight(.semibold))
-                    configurationStatus
+                    configurationStatus(for: platform)
                 }
-                Text(selectedPlatform.description)
+                Text(platform.description)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -212,8 +288,31 @@ struct SettingsView: View {
         }
     }
 
-    private var configurationStatus: some View {
-        let configured = isPlatformConfigured(selectedPlatform)
+    private var generalHeader: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 44, height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.12))
+                )
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("通用")
+                    .font(.title2.weight(.semibold))
+                Text("自动刷新、开机启动与本地配置文件等应用级选项。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func configurationStatus(for platform: SettingsPlatform) -> some View {
+        let configured = isPlatformConfigured(platform)
         return Label(configured ? "已配置" : "未配置", systemImage: configured ? "checkmark.circle.fill" : "circle.dashed")
             .font(.caption.weight(.medium))
             .foregroundStyle(configured ? Color.green : .secondary)
@@ -222,9 +321,10 @@ struct SettingsView: View {
             .background(Color.secondary.opacity(0.1), in: Capsule())
     }
 
-    private var connectionSection: some View {
+    @ViewBuilder
+    private func connectionSection(for platform: SettingsPlatform) -> some View {
         settingsSection(title: "连接配置", subtitle: "填写服务地址和访问凭据。") {
-            switch selectedPlatform {
+            switch platform {
             case .cliproxyapi:
                 settingsField("Base URL", hint: "CLIProxyAPI 管理服务地址") {
                     TextField("https://127.0.0.1:8317", text: $baseURL)
@@ -262,9 +362,10 @@ struct SettingsView: View {
         }
     }
 
-    private var dataSourceNotesSection: some View {
+    @ViewBuilder
+    private func dataSourceNotesSection(for platform: SettingsPlatform) -> some View {
         settingsSection(title: "数据来源", subtitle: "当前数据源使用的接口与范围。") {
-            switch selectedPlatform {
+            switch platform {
             case .cliproxyapi:
                 infoRow(icon: "person.2", text: "从 Management API 获取 xAI 账号列表。")
                 infoRow(icon: "chart.bar", text: "逐账号读取周额度；可用时同时读取月度额度。")
@@ -276,7 +377,7 @@ struct SettingsView: View {
     }
 
     private var refreshSection: some View {
-        settingsSection(title: "自动刷新", subtitle: "该设置由所有数据源共用。") {
+        settingsSection(title: "自动刷新", subtitle: "所有数据源共用同一刷新间隔。") {
             HStack(spacing: 16) {
                 Stepper(value: $refreshIntervalSeconds, in: minimumRefreshSeconds...3600, step: 30) {
                     Text("每 \(refreshIntervalSeconds) 秒")
@@ -288,6 +389,49 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var launchAtLoginSection: some View {
+        settingsSection(title: "启动", subtitle: "由系统登录项管理，与数据源无关。") {
+            Toggle(isOn: launchAtLoginBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("开机自动启动")
+                    Text("登录 macOS 后自动在后台启动菜单栏应用。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .accessibilityLabel("开机自动启动")
+
+            if let launchAtLoginHint {
+                Label(launchAtLoginHint, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginEnabled },
+            set: { newValue in
+                do {
+                    try LaunchAtLoginService.setEnabled(newValue)
+                    syncLaunchAtLoginFromSystem()
+                    if launchAtLoginHint == nil {
+                        statusMessage = newValue ? "已开启开机自动启动" : "已关闭开机自动启动"
+                        isError = false
+                    }
+                } catch {
+                    syncLaunchAtLoginFromSystem()
+                    statusMessage = error.localizedDescription
+                    isError = true
+                }
+            }
+        )
     }
 
     private var configurationFileSection: some View {
@@ -415,6 +559,12 @@ struct SettingsView: View {
         sub2APIKey = store.configuration.sub2APIKey
         refreshIntervalSeconds = max(store.configuration.refreshIntervalSeconds, minimumRefreshSeconds)
         preferNearRefreshAccounts = store.configuration.preferNearRefreshAccounts
+        syncLaunchAtLoginFromSystem()
+    }
+
+    private func syncLaunchAtLoginFromSystem() {
+        launchAtLoginEnabled = LaunchAtLoginService.isEnabled
+        launchAtLoginHint = LaunchAtLoginService.statusHint
     }
 
     private func reloadFromDisk() {

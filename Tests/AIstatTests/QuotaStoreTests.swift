@@ -65,7 +65,7 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertNotNil(store.globalError)
     }
 
-    func testManualRefreshIsGatedToOneMinuteUnlessForced() async {
+    func testMenuOpenRefreshIsGatedButManualForceIsNot() async {
         var now = Date(timeIntervalSince1970: 1_700_000_000)
         let accounts = [AuthAccount(provider: "xai", email: "ok@x.ai", name: "ok.json", authIndex: "a")]
         let client = FakeClient(
@@ -82,22 +82,30 @@ final class QuotaStoreTests: XCTestCase {
             nowProvider: { now }
         )
 
+        // Opening the menu uses force: false (throttled).
         await store.refresh(force: false)
         XCTAssertEqual(client.fetchAccountsCount, 1)
+        XCTAssertTrue(store.canManualRefresh)
 
+        // Re-open within the minimum interval is throttled.
         await store.refresh(force: false)
         XCTAssertEqual(client.fetchAccountsCount, 1)
-        XCTAssertFalse(store.canManualRefresh)
 
         now = now.addingTimeInterval(59)
         await store.refresh(force: false)
         XCTAssertEqual(client.fetchAccountsCount, 1)
 
-        now = now.addingTimeInterval(1)
+        // Manual refresh always uses force: true and is never rate-limited.
+        await store.refresh(force: true)
+        XCTAssertEqual(client.fetchAccountsCount, 2)
+        XCTAssertTrue(store.canManualRefresh)
+
+        // Menu-open throttle still applies after a manual refresh (timer resets).
         await store.refresh(force: false)
         XCTAssertEqual(client.fetchAccountsCount, 2)
 
-        await store.refresh(force: true)
+        now = now.addingTimeInterval(60)
+        await store.refresh(force: false)
         XCTAssertEqual(client.fetchAccountsCount, 3)
     }
 

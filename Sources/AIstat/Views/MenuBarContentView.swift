@@ -180,7 +180,7 @@ struct MenuBarContentView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
-                Task { await store.refresh(force: false) }
+                Task { await store.refresh(force: true) }
             } label: {
                 Label("刷新", systemImage: "arrow.clockwise")
             }
@@ -221,10 +221,7 @@ struct MenuBarContentView: View {
         if store.isRefreshing {
             return "正在刷新…"
         }
-        if let next = store.nextRefreshAvailableAt, next > Date() {
-            return "最短刷新间隔 1 分钟，下次可刷新 \(DisplayDateFormatter.string(from: next))"
-        }
-        return "手动刷新（最短间隔 1 分钟）"
+        return "立即刷新（不受自动刷新间隔限制）"
     }
 
     private func openSettingsWindow() {

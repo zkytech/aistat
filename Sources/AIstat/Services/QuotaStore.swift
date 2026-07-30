@@ -25,10 +25,9 @@ final class QuotaStore: ObservableObject {
     private let includeMonthly: Bool
     private let nowProvider: () -> Date
 
+    /// Manual refresh is never rate-limited; only blocked while a refresh is in flight.
     var canManualRefresh: Bool {
-        guard !isRefreshing else { return false }
-        guard let nextRefreshAvailableAt else { return true }
-        return nowProvider() >= nextRefreshAvailableAt
+        !isRefreshing
     }
 
     init(

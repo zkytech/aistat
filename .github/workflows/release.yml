@@ -16,11 +16,25 @@ concurrency:
 jobs:
   build-and-release:
     name: Package macOS app & publish release
-    runs-on: macos-14
+    # macos-15 defaults to Xcode 16.x. App Intents metadata packaging
+    # (appintentsmetadataprocessor + const-value protocols) needs 16+;
+    # macos-14's default Xcode 15.4 has a different CLI and fails packaging.
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          # Prefer the newest installed Xcode; fall back to 16.4 / default.
+          for app in /Applications/Xcode_16.4.app /Applications/Xcode_16.2.app /Applications/Xcode.app; do
+            if [[ -d "$app" ]]; then
+              sudo xcode-select -s "$app"
+              break
+            fi
+          done
+          xcodebuild -version
 
       - name: Show toolchain
         run: |
@@ -28,6 +42,8 @@ jobs:
           xcodebuild -version
           swift --version
           uname -m
+          xcrun --find appintentsmetadataprocessor
+          ls "$(xcrun --find swift | xargs dirname | xargs dirname)/usr/share/swift/SwiftConstantValues" 2>/dev/null || true
 
       - name: Test
         run: swift test

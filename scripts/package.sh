@@ -342,19 +342,39 @@ PY
 
   log "Generating Metadata.appintents for widget"
   # Processor writes <output>/Metadata.appintents/{extract.actionsdata,version.json}
-  "$APPINTENTS_PROCESSOR" \
-    --output "$widget_resources" \
-    --toolchain-dir "$TOOLCHAIN_DIR" \
-    --module-name AIstatWidget \
-    --sdk-root "$sdk_root" \
-    --xcode-version "$xcode_version" \
-    --platform-family macOS \
-    --deployment-target 14.0 \
-    --target-triple "$target_triple" \
-    --source-file-list "$sources_list" \
-    --swift-const-vals-list "$const_list" \
-    --force \
-    --quiet-warnings \
+  # CLI flags differ across Xcode versions (15.x required --binary-file; 16+ optional
+  # --quiet-warnings). Probe --help and only pass supported args.
+  local processor_help=""
+  processor_help="$("$APPINTENTS_PROCESSOR" --help 2>&1 || true)"
+  local processor_args=(
+    --output "$widget_resources"
+    --toolchain-dir "$TOOLCHAIN_DIR"
+    --module-name AIstatWidget
+    --sdk-root "$sdk_root"
+    --xcode-version "$xcode_version"
+    --platform-family macOS
+    --deployment-target 14.0
+    --target-triple "$target_triple"
+    --source-file-list "$sources_list"
+    --swift-const-vals-list "$const_list"
+    --force
+  )
+  if printf '%s' "$processor_help" | grep -q -- '--quiet-warnings'; then
+    processor_args+=(--quiet-warnings)
+  fi
+  if printf '%s' "$processor_help" | grep -q -- '--binary-file'; then
+    # Older processors require the linked appex / product binary path.
+    local widget_bin=""
+    if [[ -n "${WIDGET_BIN_DST:-}" && -x "${WIDGET_BIN_DST:-}" ]]; then
+      widget_bin="$WIDGET_BIN_DST"
+    else
+      widget_bin="$(find_built_product "$WIDGET_SPM_PRODUCT_NAME" "$triple" || true)"
+    fi
+    [[ -n "${widget_bin:-}" && -x "$widget_bin" ]] \
+      || die "widget binary not found for appintentsmetadataprocessor --binary-file"
+    processor_args+=(--binary-file "$widget_bin")
+  fi
+  "$APPINTENTS_PROCESSOR" "${processor_args[@]}" \
     || die "appintentsmetadataprocessor failed"
 
   [[ -f "$widget_resources/Metadata.appintents/extract.actionsdata" ]] \
@@ -373,11 +393,41 @@ require_cmd xcrun
 require_cmd xcodebuild
 
 # Resolve Xcode toolchain + App Intents metadata processor (needed for Edit Widget).
-TOOLCHAIN_DIR="$(xcrun --find swift | xargs dirname | xargs dirname)"
-if [[ ! -d "$TOOLCHAIN_DIR/usr/share/swift/SwiftConstantValues" ]]; then
-  # Fall back to default Xcode toolchain when `xcrun --find swift` points at a thin layout.
-  TOOLCHAIN_DIR="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain"
-fi
+# Prefer a toolchain that actually ships SwiftConstantValues JSON (needed for const-gather).
+resolve_toolchain_dir() {
+  local candidates=()
+  local swift_bin
+  swift_bin="$(xcrun --find swift 2>/dev/null || true)"
+  if [[ -n "$swift_bin" ]]; then
+    # .../usr/bin/swift → .../ (toolchain root)
+    candidates+=("$(cd "$(dirname "$swift_bin")/../.." && pwd)")
+    candidates+=("$(cd "$(dirname "$swift_bin")/.." && pwd)")
+  fi
+  candidates+=(
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain"
+    "/Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain"
+    "/Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain"
+  )
+  local cand
+  for cand in "${candidates[@]}"; do
+    if [[ -n "$cand" && -d "$cand/usr/share/swift/SwiftConstantValues" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  # Last resort: first existing candidate even without SwiftConstantValues.
+  for cand in "${candidates[@]}"; do
+    if [[ -n "$cand" && -d "$cand" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+TOOLCHAIN_DIR="$(resolve_toolchain_dir || true)"
+[[ -n "${TOOLCHAIN_DIR:-}" && -d "$TOOLCHAIN_DIR" ]] \
+  || die "could not resolve Xcode toolchain directory"
+log "Toolchain: $TOOLCHAIN_DIR"
 APPINTENTS_PROCESSOR="$(xcrun --find appintentsmetadataprocessor 2>/dev/null || true)"
 [[ -n "${APPINTENTS_PROCESSOR:-}" && -x "$APPINTENTS_PROCESSOR" ]] \
   || die "appintentsmetadataprocessor not found (install Xcode + command-line tools)"

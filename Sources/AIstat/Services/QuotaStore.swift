@@ -67,10 +67,8 @@ final class QuotaStore: ObservableObject {
     }
 
     func updateConfiguration(_ configuration: AppConfiguration) throws {
-        var next = configuration
-        next.pruneWidgetSelection()
-        try AppConfigurationStore.save(next)
-        self.configuration = next
+        try AppConfigurationStore.save(configuration)
+        self.configuration = configuration
         restartAutoRefresh()
         Task { await refresh(force: true) }
     }
@@ -329,21 +327,28 @@ final class QuotaStore: ObservableObject {
     }
 
     private func publishWidgetSnapshot(updatedAt: Date) {
-        let selectedCLI = Set(configuration.widgetCLIProxyConnectionIDs)
-        let selectedSub2 = Set(configuration.widgetSub2APIConnectionIDs)
-
-        // Preserve connection order, then each group's internal sort (default rules).
-        let widgetAccounts = accountGroups
-            .filter { selectedCLI.contains($0.connectionID) }
-            .flatMap(\.accounts)
-
-        let widgetSub2 = sub2APIEntries.filter { selectedSub2.contains($0.connectionID) }
+        // Full snapshot for all connections; each widget instance filters via App Intent config.
+        let sources: [WidgetSourceInfo] =
+            configuration.cliProxyConnections.filter(\.isConfigured).map {
+                WidgetSourceInfo(
+                    id: $0.id,
+                    name: $0.displayName,
+                    kind: WidgetSourceKind.cliproxy.rawValue
+                )
+            } + configuration.sub2APIConnections.filter(\.isConfigured).map {
+                WidgetSourceInfo(
+                    id: $0.id,
+                    name: $0.displayName,
+                    kind: WidgetSourceKind.sub2api.rawValue
+                )
+            }
 
         WidgetBridge.publish(
-            accounts: widgetAccounts,
-            sub2Entries: widgetSub2,
+            accounts: accounts,
+            sub2Entries: sub2APIEntries,
+            sources: sources,
             globalError: globalError,
-            isConfigured: configuration.hasWidgetSelection,
+            isConfigured: configuration.hasAnyDataSource,
             updatedAt: updatedAt
         )
     }

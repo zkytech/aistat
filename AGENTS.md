@@ -5,7 +5,7 @@ macOS menu bar quota viewer for AI subscription accounts via CLIProxyAPI / Sub2A
 ## Stack
 
 - Swift 5.9+ / SwiftUI
-- MenuBarExtra (macOS 13+)
+- MenuBarExtra / WidgetKit App Intents (macOS 14+)
 - URLSession for Management API
 
 ## Key APIs (CLIProxyAPI)
@@ -43,14 +43,17 @@ Filter first version to `provider == "xai"` (Grok) accounts.
 - Host (unsandboxed) writes snapshot into the widget container:
   `~/Library/Containers/app.aistat.widget/Data/Library/Application Support/aistat/widget-snapshot.json`
 - Sign with Apple Development identity when available (`package.sh` auto-detects)
+- **App Intents metadata**: SwiftPM does not emit `Metadata.appintents`. `package.sh` re-compiles widget sources with `-emit-const-values-path` and runs `appintentsmetadataprocessor` into the appex `Resources/`. Without this, desktop right-click never shows **Edit Widget**.
 - UI families: systemSmall / systemMedium / systemLarge (list) + large-only dashboard rings (`QuotaDashboardWidget`)
 
 ## Multi-connection config
 
 - `AppConfiguration` holds arrays: `cliProxyConnections` / `sub2APIConnections` (each with `id`, `name`, credentials).
+- Settings UX: single **添加账号** sheet (pick type → form); each connection is its own sidebar tab.
 - Per CLIProxy connection: `preferNearRefreshAccounts` (priority write-back is host-local).
-- Menu bar groups subscription rows by CLIProxy connection name; Sub2 balances prefix the connection name.
-- Widget shows only IDs listed in `widgetCLIProxyConnectionIDs` / `widgetSub2APIConnectionIDs` (manual selection).
+- Menu bar always shows **all** connections (CLIProxy grouped by name; Sub2 balances prefix name).
+- Desktop widgets: per-instance `AIstatWidgetConfigurationIntent` (App Intents) selects CLIProxy / Sub2 sources from snapshot `sources` catalog — not global config flags.
+- Host publishes full privacy-safe snapshot; widget timeline filters by intent selection.
 - Legacy single-field config migrates to one named connection (`默认`) on load.
 
 ## Security

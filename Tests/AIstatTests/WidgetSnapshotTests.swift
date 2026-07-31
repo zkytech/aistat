@@ -97,6 +97,47 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(decoded.primarySub2Entry?.planName, "Lite")
     }
 
+    func testFilteredSnapshotBySourceIDs() {
+        let full = WidgetSnapshot(
+            isConfigured: true,
+            accounts: [
+                WidgetAccountEntry(
+                    id: "a1",
+                    provider: "xai",
+                    displayName: "a",
+                    sourceID: "cli-1",
+                    sourceName: "家里",
+                    status: "active",
+                    remainingPercent: 10
+                ),
+                WidgetAccountEntry(
+                    id: "a2",
+                    provider: "xai",
+                    displayName: "b",
+                    sourceID: "cli-2",
+                    sourceName: "公司",
+                    status: "active",
+                    remainingPercent: 20
+                )
+            ],
+            sub2Entries: [
+                WidgetSub2Entry(id: "s1", name: "主账户", balanceText: "$1"),
+                WidgetSub2Entry(id: "s2", name: "备用", balanceText: "$2")
+            ]
+        )
+
+        let empty = full.filtered(cliProxySourceIDs: [], sub2SourceIDs: [])
+        XCTAssertFalse(empty.isConfigured)
+        XCTAssertTrue(empty.accounts.isEmpty)
+        XCTAssertTrue(empty.sub2Entries.isEmpty)
+
+        let partial = full.filtered(cliProxySourceIDs: ["cli-1"], sub2SourceIDs: ["s2"])
+        XCTAssertTrue(partial.isConfigured)
+        XCTAssertEqual(partial.accounts.map(\.id), ["a1"])
+        XCTAssertEqual(partial.sub2Entries.map(\.id), ["s2"])
+        XCTAssertEqual(partial.sub2BalanceText, "$2")
+    }
+
     func testProviderResolve() {
         XCTAssertEqual(WidgetProviderKind.resolve(from: "xai"), .grok)
         XCTAssertEqual(WidgetProviderKind.resolve(from: "anthropic"), .claude)

@@ -10,6 +10,7 @@ enum WidgetBridge {
     static func publish(
         accounts: [AccountQuota],
         sub2Entries: [Sub2APIUsageEntry],
+        sources: [WidgetSourceInfo],
         globalError: String?,
         isConfigured: Bool,
         updatedAt: Date
@@ -19,6 +20,7 @@ enum WidgetBridge {
                 id: item.id,
                 provider: item.account.provider,
                 displayName: item.account.displayName,
+                sourceID: item.connectionID.isEmpty ? nil : item.connectionID,
                 sourceName: item.connectionName.isEmpty ? nil : item.connectionName,
                 status: AccountQuotaStatus.resolved(for: item),
                 remainingPercent: item.weekly?.remainingPercent,
@@ -58,6 +60,7 @@ enum WidgetBridge {
             globalError: globalError,
             accounts: widgetAccounts,
             sub2Entries: widgetSub2,
+            sources: sources,
             sub2BalanceText: primary?.balanceText,
             sub2PlanName: primary?.planName,
             sub2Error: primary?.error

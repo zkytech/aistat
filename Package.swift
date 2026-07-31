@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "aistat",
     platforms: [
-        .macOS(.v13)
+        // Widget App Intent configuration requires macOS 14+.
+        .macOS(.v14)
     ],
     products: [
         .executable(name: "aistat", targets: ["AIstat"]),

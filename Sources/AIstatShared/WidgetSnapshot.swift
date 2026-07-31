@@ -7,6 +7,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var globalError: String?
     public var accounts: [WidgetAccountEntry]
     public var sub2Entries: [WidgetSub2Entry]
+    /// Available named connections for per-widget App Intent pickers (no secrets).
+    public var sources: [WidgetSourceInfo]
     /// Legacy single Sub2 fields kept for decode compatibility with older host builds.
     public var sub2BalanceText: String?
     public var sub2PlanName: String?
@@ -18,6 +20,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         globalError: String? = nil,
         accounts: [WidgetAccountEntry] = [],
         sub2Entries: [WidgetSub2Entry] = [],
+        sources: [WidgetSourceInfo] = [],
         sub2BalanceText: String? = nil,
         sub2PlanName: String? = nil,
         sub2Error: String? = nil
@@ -27,13 +30,14 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.globalError = globalError
         self.accounts = accounts
         self.sub2Entries = sub2Entries
+        self.sources = sources
         self.sub2BalanceText = sub2BalanceText
         self.sub2PlanName = sub2PlanName
         self.sub2Error = sub2Error
     }
 
     private enum CodingKeys: String, CodingKey {
-        case updatedAt, isConfigured, globalError, accounts, sub2Entries
+        case updatedAt, isConfigured, globalError, accounts, sub2Entries, sources
         case sub2BalanceText, sub2PlanName, sub2Error
     }
 
@@ -44,6 +48,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         globalError = try container.decodeIfPresent(String.self, forKey: .globalError)
         accounts = try container.decodeIfPresent([WidgetAccountEntry].self, forKey: .accounts) ?? []
         sub2Entries = try container.decodeIfPresent([WidgetSub2Entry].self, forKey: .sub2Entries) ?? []
+        sources = try container.decodeIfPresent([WidgetSourceInfo].self, forKey: .sources) ?? []
         sub2BalanceText = try container.decodeIfPresent(String.self, forKey: .sub2BalanceText)
         sub2PlanName = try container.decodeIfPresent(String.self, forKey: .sub2PlanName)
         sub2Error = try container.decodeIfPresent(String.self, forKey: .sub2Error)
@@ -60,6 +65,34 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
                     error: sub2Error
                 )
             ]
+        }
+
+        // Infer sources from entries when older hosts omitted the catalog.
+        if sources.isEmpty {
+            var inferred: [WidgetSourceInfo] = []
+            var seen = Set<String>()
+            for account in accounts {
+                guard let sourceID = account.sourceID, !sourceID.isEmpty else { continue }
+                guard seen.insert(sourceID).inserted else { continue }
+                inferred.append(
+                    WidgetSourceInfo(
+                        id: sourceID,
+                        name: account.sourceName ?? "CLIProxyAPI",
+                        kind: WidgetSourceKind.cliproxy.rawValue
+                    )
+                )
+            }
+            for entry in sub2Entries {
+                guard seen.insert(entry.id).inserted else { continue }
+                inferred.append(
+                    WidgetSourceInfo(
+                        id: entry.id,
+                        name: entry.name,
+                        kind: WidgetSourceKind.sub2api.rawValue
+                    )
+                )
+            }
+            sources = inferred
         }
     }
 
@@ -90,6 +123,69 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     public var hasAnyData: Bool {
         !accounts.isEmpty || !sub2Entries.isEmpty
+    }
+
+    /// Filter by per-widget App Intent selection. Empty selection → empty payload with `isConfigured = false`.
+    public func filtered(
+        cliProxySourceIDs: Set<String>,
+        sub2SourceIDs: Set<String>
+    ) -> WidgetSnapshot {
+        let hasSelection = !cliProxySourceIDs.isEmpty || !sub2SourceIDs.isEmpty
+        guard hasSelection else {
+            var empty = self
+            empty.isConfigured = false
+            empty.accounts = []
+            empty.sub2Entries = []
+            empty.sub2BalanceText = nil
+            empty.sub2PlanName = nil
+            empty.sub2Error = nil
+            return empty
+        }
+
+        var next = self
+        next.isConfigured = true
+        next.accounts = accounts.filter { entry in
+            guard let sourceID = entry.sourceID else { return false }
+            return cliProxySourceIDs.contains(sourceID)
+        }
+        next.sub2Entries = sub2Entries.filter { sub2SourceIDs.contains($0.id) }
+
+        let primary = next.primarySub2Entry
+        next.sub2BalanceText = primary?.balanceText
+        next.sub2PlanName = primary?.planName
+        next.sub2Error = primary?.error
+        return next
+    }
+}
+
+public enum WidgetSourceKind: String, Codable, Sendable {
+    case cliproxy
+    case sub2api
+}
+
+/// Named data source for widget configuration pickers (no credentials).
+public struct WidgetSourceInfo: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var kind: String
+
+    public init(id: String, name: String, kind: String) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+    }
+
+    public var sourceKind: WidgetSourceKind {
+        WidgetSourceKind(rawValue: kind) ?? .cliproxy
+    }
+
+    public var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        switch sourceKind {
+        case .cliproxy: return "CLIProxyAPI"
+        case .sub2api: return "Sub2API"
+        }
     }
 }
 
@@ -124,6 +220,8 @@ public struct WidgetAccountEntry: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var provider: String
     public var displayName: String
+    /// CLIProxyAPI connection id (for per-widget filtering).
+    public var sourceID: String?
     /// CLIProxyAPI connection name (optional for older snapshots).
     public var sourceName: String?
     public var status: String
@@ -137,6 +235,7 @@ public struct WidgetAccountEntry: Codable, Equatable, Identifiable, Sendable {
         id: String,
         provider: String,
         displayName: String,
+        sourceID: String? = nil,
         sourceName: String? = nil,
         status: String,
         remainingPercent: Double? = nil,
@@ -148,6 +247,7 @@ public struct WidgetAccountEntry: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.provider = provider
         self.displayName = displayName
+        self.sourceID = sourceID
         self.sourceName = sourceName
         self.status = status
         self.remainingPercent = remainingPercent

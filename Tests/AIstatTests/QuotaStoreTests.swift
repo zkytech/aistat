@@ -452,8 +452,7 @@ final class QuotaStoreTests: XCTestCase {
         let store = QuotaStore(
             configuration: AppConfiguration(
                 cliProxyConnections: [home, office],
-                refreshIntervalSeconds: 300,
-                widgetCLIProxyConnectionIDs: [home.id, office.id]
+                refreshIntervalSeconds: 300
             ),
             includeMonthly: false,
             clientFactory: { connection in
@@ -516,8 +515,7 @@ final class QuotaStoreTests: XCTestCase {
         let store = QuotaStore(
             configuration: AppConfiguration(
                 sub2APIConnections: [primary, backup],
-                refreshIntervalSeconds: 300,
-                widgetSub2APIConnectionIDs: [primary.id, backup.id]
+                refreshIntervalSeconds: 300
             ),
             includeMonthly: false,
             clientFactory: { _ in FakeClient(accounts: [], weekly: [:]) },
@@ -551,8 +549,6 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertTrue(config.cliProxyConnections[0].preferNearRefreshAccounts)
         XCTAssertEqual(config.sub2APIConnections.count, 1)
         XCTAssertEqual(config.sub2APIConnections[0].apiKey, "sk")
-        XCTAssertEqual(config.widgetCLIProxyConnectionIDs, [config.cliProxyConnections[0].id])
-        XCTAssertEqual(config.widgetSub2APIConnectionIDs, [config.sub2APIConnections[0].id])
         XCTAssertEqual(config.refreshIntervalSeconds, 120)
     }
 }

@@ -90,23 +90,15 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var cliProxyConnections: [CLIProxyConnection]
     var sub2APIConnections: [Sub2APIConnection]
     var refreshIntervalSeconds: Int
-    /// CLIProxy connection IDs selected for desktop widget display. Empty = show none.
-    var widgetCLIProxyConnectionIDs: [String]
-    /// Sub2API connection IDs selected for desktop widget display. Empty = show none.
-    var widgetSub2APIConnectionIDs: [String]
 
     init(
         cliProxyConnections: [CLIProxyConnection] = [],
         sub2APIConnections: [Sub2APIConnection] = [],
-        refreshIntervalSeconds: Int = Self.defaultRefreshIntervalSeconds,
-        widgetCLIProxyConnectionIDs: [String] = [],
-        widgetSub2APIConnectionIDs: [String] = []
+        refreshIntervalSeconds: Int = Self.defaultRefreshIntervalSeconds
     ) {
         self.cliProxyConnections = cliProxyConnections
         self.sub2APIConnections = sub2APIConnections
         self.refreshIntervalSeconds = refreshIntervalSeconds
-        self.widgetCLIProxyConnectionIDs = widgetCLIProxyConnectionIDs
-        self.widgetSub2APIConnectionIDs = widgetSub2APIConnectionIDs
     }
 
     /// Convenience for tests and single-connection call sites.
@@ -148,17 +140,15 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         self.init(
             cliProxyConnections: cli,
             sub2APIConnections: sub2,
-            refreshIntervalSeconds: refreshIntervalSeconds,
-            widgetCLIProxyConnectionIDs: cli.map(\.id),
-            widgetSub2APIConnectionIDs: sub2.map(\.id)
+            refreshIntervalSeconds: refreshIntervalSeconds
         )
     }
 
     private enum CodingKeys: String, CodingKey {
         case cliProxyConnections, sub2APIConnections, refreshIntervalSeconds
-        case widgetCLIProxyConnectionIDs, widgetSub2APIConnectionIDs
-        // Legacy single-connection keys (decode-only migration).
+        // Legacy keys (decode-only migration / ignored widget selection).
         case baseURL, managementKey, sub2APIBaseURL, sub2APIKey, preferNearRefreshAccounts
+        case widgetCLIProxyConnectionIDs, widgetSub2APIConnectionIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -169,8 +159,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         if container.contains(.cliProxyConnections) || container.contains(.sub2APIConnections) {
             cliProxyConnections = try container.decodeIfPresent([CLIProxyConnection].self, forKey: .cliProxyConnections) ?? []
             sub2APIConnections = try container.decodeIfPresent([Sub2APIConnection].self, forKey: .sub2APIConnections) ?? []
-            widgetCLIProxyConnectionIDs = try container.decodeIfPresent([String].self, forKey: .widgetCLIProxyConnectionIDs) ?? []
-            widgetSub2APIConnectionIDs = try container.decodeIfPresent([String].self, forKey: .widgetSub2APIConnectionIDs) ?? []
+            // widget* IDs intentionally ignored — selection is per-widget instance.
         } else {
             // Migrate legacy single-connection config.
             let baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
@@ -181,39 +170,31 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 
             if !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !managementKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let connection = CLIProxyConnection(
-                    name: "默认",
-                    baseURL: baseURL,
-                    managementKey: managementKey,
-                    preferNearRefreshAccounts: prefer
-                )
-                cliProxyConnections = [connection]
-                widgetCLIProxyConnectionIDs = [connection.id]
+                cliProxyConnections = [
+                    CLIProxyConnection(
+                        name: "默认",
+                        baseURL: baseURL,
+                        managementKey: managementKey,
+                        preferNearRefreshAccounts: prefer
+                    )
+                ]
             } else {
                 cliProxyConnections = []
-                widgetCLIProxyConnectionIDs = []
             }
 
             if !sub2Base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !sub2Key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let connection = Sub2APIConnection(
-                    name: "默认",
-                    baseURL: sub2Base,
-                    apiKey: sub2Key
-                )
-                sub2APIConnections = [connection]
-                widgetSub2APIConnectionIDs = [connection.id]
+                sub2APIConnections = [
+                    Sub2APIConnection(
+                        name: "默认",
+                        baseURL: sub2Base,
+                        apiKey: sub2Key
+                    )
+                ]
             } else {
                 sub2APIConnections = []
-                widgetSub2APIConnectionIDs = []
             }
         }
-
-        // Drop stale widget selection IDs that no longer exist.
-        let cliIDs = Set(cliProxyConnections.map(\.id))
-        let sub2IDs = Set(sub2APIConnections.map(\.id))
-        widgetCLIProxyConnectionIDs = widgetCLIProxyConnectionIDs.filter { cliIDs.contains($0) }
-        widgetSub2APIConnectionIDs = widgetSub2APIConnectionIDs.filter { sub2IDs.contains($0) }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -221,8 +202,6 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         try container.encode(cliProxyConnections, forKey: .cliProxyConnections)
         try container.encode(sub2APIConnections, forKey: .sub2APIConnections)
         try container.encode(refreshIntervalSeconds, forKey: .refreshIntervalSeconds)
-        try container.encode(widgetCLIProxyConnectionIDs, forKey: .widgetCLIProxyConnectionIDs)
-        try container.encode(widgetSub2APIConnectionIDs, forKey: .widgetSub2APIConnectionIDs)
     }
 
     static let defaultRefreshIntervalSeconds = 300
@@ -257,30 +236,6 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     func sub2APIConnection(id: String) -> Sub2APIConnection? {
         sub2APIConnections.first { $0.id == id }
     }
-
-    /// Configured CLIProxy connections selected for the widget, in connection list order.
-    var widgetCLIProxyConnections: [CLIProxyConnection] {
-        let selected = Set(widgetCLIProxyConnectionIDs)
-        return cliProxyConnections.filter { selected.contains($0.id) && $0.isConfigured }
-    }
-
-    /// Configured Sub2API connections selected for the widget, in connection list order.
-    var widgetSub2APIConnections: [Sub2APIConnection] {
-        let selected = Set(widgetSub2APIConnectionIDs)
-        return sub2APIConnections.filter { selected.contains($0.id) && $0.isConfigured }
-    }
-
-    var hasWidgetSelection: Bool {
-        !widgetCLIProxyConnections.isEmpty || !widgetSub2APIConnections.isEmpty
-    }
-
-    /// Remove deleted connection IDs from widget selection lists.
-    mutating func pruneWidgetSelection() {
-        let cliIDs = Set(cliProxyConnections.map(\.id))
-        let sub2IDs = Set(sub2APIConnections.map(\.id))
-        widgetCLIProxyConnectionIDs = widgetCLIProxyConnectionIDs.filter { cliIDs.contains($0) }
-        widgetSub2APIConnectionIDs = widgetSub2APIConnectionIDs.filter { sub2IDs.contains($0) }
-    }
 }
 
 // MARK: - Persistence
@@ -308,7 +263,6 @@ enum AppConfigurationStore {
             if config.refreshIntervalSeconds <= 0 {
                 config.refreshIntervalSeconds = AppConfiguration.defaultRefreshIntervalSeconds
             }
-            config.pruneWidgetSelection()
             return config
         } catch {
             return .empty
@@ -323,7 +277,6 @@ enum AppConfigurationStore {
         if values.refreshIntervalSeconds <= 0 {
             values.refreshIntervalSeconds = AppConfiguration.defaultRefreshIntervalSeconds
         }
-        values.pruneWidgetSelection()
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

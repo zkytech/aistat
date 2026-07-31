@@ -104,12 +104,186 @@ find_built_product() {
   find "$ROOT/.build" -type f -name "$name" -path "*/$CONFIGURATION/*" 2>/dev/null | head -n 1
 }
 
+find_widget_build_dir() {
+  local triple="${1:-}"
+  local candidates=(
+    "$ROOT/.build/$CONFIGURATION/AIstatWidget.build"
+    "$ROOT/.build/${triple}/$CONFIGURATION/AIstatWidget.build"
+    "$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/AIstatWidget.build"
+  )
+  local cand
+  for cand in "${candidates[@]}"; do
+    if [[ -n "$cand" && -d "$cand" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  find "$ROOT/.build" -type d -name "AIstatWidget.build" -path "*/$CONFIGURATION/*" 2>/dev/null | head -n 1
+}
+
+# SwiftPM does not emit App Intents metadata. Without Metadata.appintents inside
+# the .appex, macOS never shows "Edit Widget" for AppIntentConfiguration.
+# Re-compile widget sources with -emit-const-values-path, then run
+# appintentsmetadataprocessor into the appex Resources.
+emit_widget_appintents_metadata() {
+  local widget_resources="$1"
+  local triple="$2"
+  local widget_build_dir
+  widget_build_dir="$(find_widget_build_dir "$triple" || true)"
+  [[ -n "${widget_build_dir:-}" && -d "$widget_build_dir" ]] \
+    || die "AIstatWidget.build directory not found (needed for App Intents metadata)"
+
+  local sdk_root
+  sdk_root="$(xcrun --sdk macosx --show-sdk-path)"
+  [[ -n "$sdk_root" && -d "$sdk_root" ]] || die "macOS SDK not found"
+
+  local xcode_version
+  xcode_version="$(xcodebuild -version 2>/dev/null | awk '/Build version/{print $3}')"
+  [[ -n "$xcode_version" ]] || die "could not read Xcode build version"
+
+  local const_dir="$ROOT/.build/appintents-metadata"
+  rm -rf "$const_dir"
+  mkdir -p "$const_dir"
+
+  local protocols_json="$const_dir/protocols.json"
+  local ofm_json="$const_dir/output-file-map.json"
+  local sources_list="$const_dir/sources.txt"
+  local const_list="$const_dir/swiftconstvals.txt"
+  local modules_dir
+  # Prefer the configuration/triple Modules dir next to the widget build product.
+  modules_dir="$(dirname "$widget_build_dir")/Modules"
+  [[ -d "$modules_dir" ]] || modules_dir="$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/Modules"
+  [[ -d "$modules_dir" ]] || die "Swift modules dir not found for AIstatShared import"
+
+  local target_triple="${triple:-arm64-apple-macosx14.0}"
+  # Normalize SPM triple (arm64-apple-macosx) → compiler triple with deployment.
+  case "$target_triple" in
+    *-apple-macosx) target_triple="${target_triple}14.0" ;;
+    *-apple-macosx.*) ;;
+    *) target_triple="arm64-apple-macosx14.0" ;;
+  esac
+
+  python3 - "$ROOT" "$widget_build_dir" "$const_dir" "$TOOLCHAIN_DIR" <<'PY'
+import json, os, sys
+root, wbuild, const_dir, toolchain = sys.argv[1:5]
+sources = []
+for name in (
+    "AIstatWidgetBundle.swift",
+    "QuotaWidget.swift",
+    "QuotaWidgetViews.swift",
+    "WidgetConfigurationIntent.swift",
+    "WidgetTheme.swift",
+):
+    path = os.path.join(root, "Sources", "AIstatWidget", name)
+    if not os.path.isfile(path):
+        raise SystemExit(f"missing widget source: {path}")
+    sources.append(path)
+accessor = os.path.join(wbuild, "DerivedSources", "resource_bundle_accessor.swift")
+if os.path.isfile(accessor):
+    sources.append(accessor)
+
+ofm = {"": {"object": os.path.join(const_dir, "AIstatWidget.o")}}
+const_paths = []
+for src in sources:
+    base = os.path.basename(src)
+    const_path = os.path.join(const_dir, f"{base}.swiftconstvalues")
+    ofm[src] = {
+        "object": os.path.join(const_dir, f"{base}.o"),
+        "const-values": const_path,
+    }
+    const_paths.append(const_path)
+
+with open(os.path.join(const_dir, "output-file-map.json"), "w") as f:
+    json.dump(ofm, f, indent=2)
+with open(os.path.join(const_dir, "sources.txt"), "w") as f:
+    f.write("\n".join(sources) + "\n")
+with open(os.path.join(const_dir, "swiftconstvals.txt"), "w") as f:
+    f.write("\n".join(const_paths) + "\n")
+
+share = os.path.join(toolchain, "usr", "share", "swift", "SwiftConstantValues")
+protos = []
+for name in ("AppIntents.json", "ExtensionKit.json"):
+    path = os.path.join(share, name)
+    if os.path.isfile(path):
+        with open(path) as f:
+            protos.extend(json.load(f).get("constValueProtocols", []))
+# WidgetConfigurationIntent is defined by WidgetKit, not AppIntents.json.
+if "WidgetConfigurationIntent" not in protos:
+    protos.append("WidgetConfigurationIntent")
+if not protos:
+    raise SystemExit(f"no const-value protocols found under {share}")
+with open(os.path.join(const_dir, "protocols.json"), "w") as f:
+    json.dump(protos, f)
+print(f"sources={len(sources)} protocols={len(protos)}")
+PY
+
+  log "Emitting Swift const values for App Intents"
+  # shellcheck disable=SC2046
+  swiftc \
+    -sdk "$sdk_root" \
+    -target "$target_triple" \
+    -module-name AIstatWidget \
+    -I "$modules_dir" \
+    -parse-as-library \
+    -application-extension \
+    -output-file-map "$ofm_json" \
+    -Xfrontend -const-gather-protocols-file -Xfrontend "$protocols_json" \
+    -emit-const-values-path "$const_dir/fallback.swiftconstvalues" \
+    -c \
+    $(cat "$sources_list") \
+    || die "failed to emit Swift const values for widget App Intents"
+
+  # Ensure the intent file produced real const metadata (not empty "[]").
+  local intent_const
+  intent_const="$(grep -E 'WidgetConfigurationIntent\.swift\.swiftconstvalues$' "$const_list" | head -n 1 || true)"
+  [[ -n "$intent_const" && -s "$intent_const" ]] \
+    || die "missing WidgetConfigurationIntent.swiftconstvalues"
+  local intent_size
+  intent_size="$(wc -c < "$intent_const" | tr -d ' ')"
+  [[ "$intent_size" -gt 100 ]] \
+    || die "WidgetConfigurationIntent const values too small (${intent_size} bytes) — Edit Widget would not appear"
+
+  log "Generating Metadata.appintents for widget"
+  # Processor writes <output>/Metadata.appintents/{extract.actionsdata,version.json}
+  "$APPINTENTS_PROCESSOR" \
+    --output "$widget_resources" \
+    --toolchain-dir "$TOOLCHAIN_DIR" \
+    --module-name AIstatWidget \
+    --sdk-root "$sdk_root" \
+    --xcode-version "$xcode_version" \
+    --platform-family macOS \
+    --deployment-target 14.0 \
+    --target-triple "$target_triple" \
+    --source-file-list "$sources_list" \
+    --swift-const-vals-list "$const_list" \
+    --force \
+    --quiet-warnings \
+    || die "appintentsmetadataprocessor failed"
+
+  [[ -f "$widget_resources/Metadata.appintents/extract.actionsdata" ]] \
+    || die "Metadata.appintents/extract.actionsdata was not produced"
+  log "App Intents metadata installed under widget Resources"
+}
+
 require_cmd swift
 require_cmd codesign
 require_cmd nm
 require_cmd plutil
 require_cmd ditto
 require_cmd zip
+require_cmd python3
+require_cmd xcrun
+require_cmd xcodebuild
+
+# Resolve Xcode toolchain + App Intents metadata processor (needed for Edit Widget).
+TOOLCHAIN_DIR="$(xcrun --find swift | xargs dirname | xargs dirname)"
+if [[ ! -d "$TOOLCHAIN_DIR/usr/share/swift/SwiftConstantValues" ]]; then
+  # Fall back to default Xcode toolchain when `xcrun --find swift` points at a thin layout.
+  TOOLCHAIN_DIR="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain"
+fi
+APPINTENTS_PROCESSOR="$(xcrun --find appintentsmetadataprocessor 2>/dev/null || true)"
+[[ -n "${APPINTENTS_PROCESSOR:-}" && -x "$APPINTENTS_PROCESSOR" ]] \
+  || die "appintentsmetadataprocessor not found (install Xcode + command-line tools)"
 
 cd "$ROOT"
 
@@ -292,7 +466,7 @@ cat > "$WIDGET_INFO_PLIST" <<PLIST
 	<key>CFBundleVersion</key>
 	<string>${BUILD_NUMBER}</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<string>14.0</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
@@ -304,6 +478,10 @@ cat > "$WIDGET_INFO_PLIST" <<PLIST
 </plist>
 PLIST
 plutil -lint "$WIDGET_INFO_PLIST" >/dev/null
+
+# AppIntentConfiguration widgets need Metadata.appintents or the system
+# never shows the desktop right-click "Edit Widget" / configure UI.
+emit_widget_appintents_metadata "$WIDGET_RESOURCES" "${TRIPLE:-}"
 
 [[ -f "$APP_ENTITLEMENTS" ]] || die "missing entitlements: $APP_ENTITLEMENTS"
 [[ -f "$WIDGET_ENTITLEMENTS" ]] || die "missing entitlements: $WIDGET_ENTITLEMENTS"

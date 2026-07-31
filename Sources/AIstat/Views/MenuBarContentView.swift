@@ -24,10 +24,10 @@ struct MenuBarContentView: View {
                     }
                 }
             })
-            .onChange(of: hoveredAccountID) { _ in
+            .onChange(of: hoveredAccountID) {
                 syncDetailPanel()
             }
-            .onChange(of: store.accounts) { _ in
+            .onChange(of: store.accounts) {
                 if let hoveredAccountID, store.accounts.contains(where: { $0.id == hoveredAccountID }) {
                     syncDetailPanel()
                 } else if hoveredAccountID != nil {

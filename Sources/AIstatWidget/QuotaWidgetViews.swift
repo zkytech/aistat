@@ -62,7 +62,7 @@ struct SmallQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "设置 → 通用中勾选小组件账号"
+                message: "编辑小组件，选择要展示的账号"
             )
         } else if let account = entry.snapshot.tightestAccount ?? entry.snapshot.accounts.first {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceSM) {
@@ -154,7 +154,7 @@ struct MediumQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "打开 AIstat → 设置 → 通用，勾选要在小组件中展示的账号"
+                message: "编辑此小组件，选择要展示的 CLIProxyAPI / Sub2API 账号"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceSM) {
@@ -227,7 +227,7 @@ struct LargeQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "在菜单栏打开 AIstat → 设置 → 通用，勾选要在小组件中展示的 CLIProxyAPI / Sub2API 账号。"
+                message: "编辑此小组件，选择要展示的 CLIProxyAPI / Sub2API 账号。"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceMD) {
@@ -237,7 +237,7 @@ struct LargeQuotaWidgetView: View {
                     emptyInline(title: "无法加载账号", message: globalError)
                     Spacer(minLength: 0)
                 } else if rows.isEmpty {
-                    emptyInline(title: "暂无 OpenAI / Claude / Grok 账号", message: "确认已勾选的 CLIProxyAPI 已登录对应账号后刷新。")
+                    emptyInline(title: "暂无 OpenAI / Claude / Grok 账号", message: "确认已选择的 CLIProxyAPI 已登录对应账号后刷新。")
                     Spacer(minLength: 0)
                 } else {
                     VStack(spacing: WidgetTheme.spaceSM) {
@@ -344,7 +344,7 @@ struct LargeDashboardQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "在菜单栏打开 AIstat → 设置 → 通用，勾选要在小组件中展示的 CLIProxyAPI / Sub2API 账号。"
+                message: "编辑此小组件，选择要展示的 CLIProxyAPI / Sub2API 账号。"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceLG) {

@@ -297,18 +297,81 @@ with open(os.path.join(const_dir, "sources.txt"), "w") as f:
 with open(os.path.join(const_dir, "swiftconstvals.txt"), "w") as f:
     f.write("\n".join(const_paths) + "\n")
 
-share = os.path.join(toolchain, "usr", "share", "swift", "SwiftConstantValues")
+# Built-in fallback when toolchain JSONs are missing (seen on some CI images).
+# Mirrors Xcode 16 / 26 AppIntents.json + ExtensionKit.json + WidgetKit.
+FALLBACK_PROTOS = [
+    "AnyResolverProviding",
+    "AppEntity",
+    "AppEnum",
+    "AppIntent",
+    "AppIntentsPackage",
+    "AppShortcutProviding",
+    "AppShortcutsProvider",
+    "AppUnionValue",
+    "AppUnionValueCasesProviding",
+    "DynamicOptionsProvider",
+    "EntityQuery",
+    "IntentValueQuery",
+    "Resolver",
+    "TransientEntity",
+    "_AssistantIntentsProvider",
+    "_GenerativeFunctionExtractable",
+    "_IntentValueRepresentable",
+    "AppExtension",
+    "ExtensionPointDefining",
+    "WidgetConfigurationIntent",
+]
+
+def load_protos_from_dir(share: str) -> list:
+    found = []
+    for name in ("AppIntents.json", "ExtensionKit.json", "WidgetKit.json"):
+        path = os.path.join(share, name)
+        if os.path.isfile(path):
+            with open(path) as f:
+                found.extend(json.load(f).get("constValueProtocols", []))
+    return found
+
+share_candidates = [
+    os.path.join(toolchain, "usr", "share", "swift", "SwiftConstantValues"),
+    os.path.join(toolchain, "share", "swift", "SwiftConstantValues"),
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/swift/SwiftConstantValues",
+    "/Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/swift/SwiftConstantValues",
+    "/Applications/Xcode_16.2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/swift/SwiftConstantValues",
+]
+# Also walk DEVELOPER_DIR if set.
+dev_dir = os.environ.get("DEVELOPER_DIR") or "/Applications/Xcode.app/Contents/Developer"
+share_candidates.append(
+    os.path.join(dev_dir, "Toolchains/XcodeDefault.xctoolchain/usr/share/swift/SwiftConstantValues")
+)
+
 protos = []
-for name in ("AppIntents.json", "ExtensionKit.json"):
-    path = os.path.join(share, name)
-    if os.path.isfile(path):
-        with open(path) as f:
-            protos.extend(json.load(f).get("constValueProtocols", []))
-# WidgetConfigurationIntent is defined by WidgetKit, not AppIntents.json.
+used_share = None
+for share in share_candidates:
+    loaded = load_protos_from_dir(share)
+    if loaded:
+        protos = loaded
+        used_share = share
+        break
+
+if not protos:
+    print(
+        f"warning: no AppIntents.json under toolchain={toolchain!r}; using built-in protocol list",
+        file=sys.stderr,
+    )
+    for share in share_candidates:
+        print(f"  missing: {share} exists={os.path.isdir(share)}", file=sys.stderr)
+    protos = list(FALLBACK_PROTOS)
+else:
+    print(f"const-value protocols from: {used_share}")
+
+# WidgetConfigurationIntent lives in WidgetKit (often absent from AppIntents.json).
 if "WidgetConfigurationIntent" not in protos:
     protos.append("WidgetConfigurationIntent")
-if not protos:
-    raise SystemExit(f"no const-value protocols found under {share}")
+# Ensure AppEntity is always gathered — required for [Entity]? @Parameter metadata.
+for required in ("AppEntity", "EntityQuery", "AppIntent"):
+    if required not in protos:
+        protos.append(required)
+
 with open(os.path.join(const_dir, "protocols.json"), "w") as f:
     json.dump(protos, f)
 print(f"sources={len(sources)} protocols={len(protos)}")

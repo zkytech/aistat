@@ -80,25 +80,30 @@ struct AIstatWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "展示账号"
     static var description = IntentDescription("为此小组件实例选择要展示的 CLIProxyAPI / Sub2API 账号。未选择时小组件为空。")
 
-    @Parameter(title: "CLIProxyAPI 账号")
-    var cliProxyAccounts: [CLIProxySourceEntity]?
+    // Non-optional arrays with empty defaults — Optional<[AppEntity]> confuses
+    // appintentsmetadataprocessor ("Unable to determine value type").
+    @Parameter(title: "CLIProxyAPI 账号", default: [])
+    var cliProxyAccounts: [CLIProxySourceEntity]
 
-    @Parameter(title: "Sub2API 账号")
-    var sub2Accounts: [Sub2SourceEntity]?
+    @Parameter(title: "Sub2API 账号", default: [])
+    var sub2Accounts: [Sub2SourceEntity]
 
-    init() {}
+    init() {
+        self.cliProxyAccounts = []
+        self.sub2Accounts = []
+    }
 
-    init(cliProxyAccounts: [CLIProxySourceEntity]?, sub2Accounts: [Sub2SourceEntity]?) {
+    init(cliProxyAccounts: [CLIProxySourceEntity], sub2Accounts: [Sub2SourceEntity]) {
         self.cliProxyAccounts = cliProxyAccounts
         self.sub2Accounts = sub2Accounts
     }
 
     var selectedCLIProxyIDs: Set<String> {
-        Set((cliProxyAccounts ?? []).map(\.id))
+        Set(cliProxyAccounts.map(\.id))
     }
 
     var selectedSub2IDs: Set<String> {
-        Set((sub2Accounts ?? []).map(\.id))
+        Set(sub2Accounts.map(\.id))
     }
 }
 

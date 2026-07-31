@@ -30,7 +30,8 @@ jobs:
           # Prefer the newest installed Xcode; fall back to 16.4 / default.
           for app in /Applications/Xcode_16.4.app /Applications/Xcode_16.2.app /Applications/Xcode.app; do
             if [[ -d "$app" ]]; then
-              sudo xcode-select -s "$app"
+              sudo xcode-select -s "$app/Contents/Developer"
+              echo "DEVELOPER_DIR=$app/Contents/Developer" >> "$GITHUB_ENV"
               break
             fi
           done
@@ -43,7 +44,11 @@ jobs:
           swift --version
           uname -m
           xcrun --find appintentsmetadataprocessor
-          ls "$(xcrun --find swift | xargs dirname | xargs dirname)/usr/share/swift/SwiftConstantValues" 2>/dev/null || true
+          SWIFT_BIN="$(xcrun --find swift)"
+          TOOLCHAIN="$(cd "$(dirname "$SWIFT_BIN")/../.." && pwd)"
+          echo "swift=$SWIFT_BIN"
+          echo "toolchain=$TOOLCHAIN"
+          ls "$TOOLCHAIN/usr/share/swift/SwiftConstantValues" 2>/dev/null || echo "SwiftConstantValues missing"
 
       - name: Test
         run: swift test

@@ -106,9 +106,16 @@ find_built_product() {
 
 find_widget_build_dir() {
   local triple="${1:-}"
+  # SPM build roots use the unversioned triple (arm64-apple-macosx), while
+  # `swift -print-target-info` often returns arm64-apple-macosx14.0 / 26.0.
+  local triple_base=""
+  if [[ -n "$triple" ]]; then
+    triple_base="$(printf '%s' "$triple" | sed -E 's/macosx[0-9.]*$/macosx/')"
+  fi
   local candidates=(
     "$ROOT/.build/$CONFIGURATION/AIstatWidget.build"
     "$ROOT/.build/${triple}/$CONFIGURATION/AIstatWidget.build"
+    "$ROOT/.build/${triple_base}/$CONFIGURATION/AIstatWidget.build"
     "$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/AIstatWidget.build"
   )
   local cand
@@ -119,6 +126,83 @@ find_widget_build_dir() {
     fi
   done
   find "$ROOT/.build" -type d -name "AIstatWidget.build" -path "*/$CONFIGURATION/*" 2>/dev/null | head -n 1
+}
+
+# Resolve -I path that contains AIstatShared.swiftmodule.
+# SwiftPM layout varies by toolchain:
+#   modern: .build/<triple>/<config>/Modules/AIstatShared.swiftmodule
+#   older:  .build/<triple>/<config>/AIstatShared.swiftmodule/ (dir)
+#   host:   .build/<config>/Modules/...
+find_swift_modules_dir() {
+  local triple="${1:-}"
+  local widget_build_dir="${2:-}"
+  local triple_base=""
+  if [[ -n "$triple" ]]; then
+    triple_base="$(printf '%s' "$triple" | sed -E 's/macosx[0-9.]*$/macosx/')"
+  fi
+
+  local candidates=()
+  if [[ -n "$widget_build_dir" ]]; then
+    candidates+=("$(dirname "$widget_build_dir")/Modules")
+    candidates+=("$(dirname "$widget_build_dir")")
+  fi
+  candidates+=(
+    "$ROOT/.build/$CONFIGURATION/Modules"
+    "$ROOT/.build/$CONFIGURATION"
+    "$ROOT/.build/${triple}/$CONFIGURATION/Modules"
+    "$ROOT/.build/${triple}/$CONFIGURATION"
+    "$ROOT/.build/${triple_base}/$CONFIGURATION/Modules"
+    "$ROOT/.build/${triple_base}/$CONFIGURATION"
+    "$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/Modules"
+    "$ROOT/.build/arm64-apple-macosx/$CONFIGURATION"
+  )
+
+  local cand
+  for cand in "${candidates[@]}"; do
+    [[ -n "$cand" && -d "$cand" ]] || continue
+    if [[ -e "$cand/AIstatShared.swiftmodule" || -d "$cand/AIstatShared.swiftmodule" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+
+  local found
+  found="$(find "$ROOT/.build" -name 'AIstatShared.swiftmodule' -path "*/$CONFIGURATION/*" 2>/dev/null | head -n 1 || true)"
+  if [[ -n "$found" ]]; then
+    printf '%s\n' "$(dirname "$found")"
+    return 0
+  fi
+  return 1
+}
+
+# Build AIstatShared.swiftmodule into a private Modules dir for the App Intents
+# recompile. Used when SwiftPM's module layout cannot be discovered (CI toolchains).
+emit_aistat_shared_module() {
+  local modules_out="$1"
+  local target_triple="$2"
+  local sdk_root="$3"
+  mkdir -p "$modules_out"
+  local sources=()
+  local f
+  for f in "$ROOT"/Sources/AIstatShared/*.swift; do
+    [[ -f "$f" ]] || continue
+    sources+=("$f")
+  done
+  [[ "${#sources[@]}" -gt 0 ]] || die "no AIstatShared sources under Sources/AIstatShared"
+  log "Emitting AIstatShared.swiftmodule for App Intents (-I $modules_out)"
+  # Only need the module interface for `import AIstatShared` during const-value emit.
+  # Do not pass -c/-o with multiple sources (swiftc rejects a single -o).
+  swiftc \
+    -sdk "$sdk_root" \
+    -target "$target_triple" \
+    -module-name AIstatShared \
+    -parse-as-library \
+    -emit-module \
+    -emit-module-path "$modules_out/AIstatShared.swiftmodule" \
+    "${sources[@]}" \
+    || die "failed to emit AIstatShared.swiftmodule for App Intents"
+  [[ -e "$modules_out/AIstatShared.swiftmodule" || -d "$modules_out/AIstatShared.swiftmodule" ]] \
+    || die "AIstatShared.swiftmodule was not produced"
 }
 
 # SwiftPM does not emit App Intents metadata. Without Metadata.appintents inside
@@ -149,11 +233,6 @@ emit_widget_appintents_metadata() {
   local ofm_json="$const_dir/output-file-map.json"
   local sources_list="$const_dir/sources.txt"
   local const_list="$const_dir/swiftconstvals.txt"
-  local modules_dir
-  # Prefer the configuration/triple Modules dir next to the widget build product.
-  modules_dir="$(dirname "$widget_build_dir")/Modules"
-  [[ -d "$modules_dir" ]] || modules_dir="$ROOT/.build/arm64-apple-macosx/$CONFIGURATION/Modules"
-  [[ -d "$modules_dir" ]] || die "Swift modules dir not found for AIstatShared import"
 
   local target_triple="${triple:-arm64-apple-macosx14.0}"
   # Normalize SPM triple (arm64-apple-macosx) → compiler triple with deployment.
@@ -162,6 +241,24 @@ emit_widget_appintents_metadata() {
     *-apple-macosx.*) ;;
     *) target_triple="arm64-apple-macosx14.0" ;;
   esac
+
+  local modules_dir=""
+  modules_dir="$(find_swift_modules_dir "$triple" "$widget_build_dir" || true)"
+  # -e matches both file and directory .swiftmodule layouts across SPM versions.
+  if [[ -z "${modules_dir:-}" || ! -e "$modules_dir/AIstatShared.swiftmodule" ]]; then
+    if [[ -n "${modules_dir:-}" ]]; then
+      log "AIstatShared.swiftmodule missing under $modules_dir — will emit a private copy"
+    else
+      log "Swift modules dir not discovered under .build (SwiftPM layout varies by Xcode)"
+      # Help CI debugging when discovery fails on unfamiliar toolchains.
+      find "$ROOT/.build" -name 'AIstatShared*' 2>/dev/null | head -n 20 || true
+      find "$ROOT/.build" -type d -name 'Modules' 2>/dev/null | head -n 10 || true
+    fi
+    modules_dir="$const_dir/Modules"
+    emit_aistat_shared_module "$modules_dir" "$target_triple" "$sdk_root"
+  else
+    log "Using Swift modules dir: $modules_dir"
+  fi
 
   python3 - "$ROOT" "$widget_build_dir" "$const_dir" "$TOOLCHAIN_DIR" <<'PY'
 import json, os, sys

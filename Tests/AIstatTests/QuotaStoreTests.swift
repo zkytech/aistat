@@ -549,7 +549,112 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertTrue(config.cliProxyConnections[0].preferNearRefreshAccounts)
         XCTAssertEqual(config.sub2APIConnections.count, 1)
         XCTAssertEqual(config.sub2APIConnections[0].apiKey, "sk")
+        XCTAssertTrue(config.deepSeekConnections.isEmpty)
         XCTAssertEqual(config.refreshIntervalSeconds, 120)
+    }
+
+    func testDeepSeekOnlyConfigurationRefreshesBalance() async {
+        let client = FakeClient(accounts: [], weekly: [:])
+        let ds = FakeDeepSeekClient(
+            result: .success(
+                DeepSeekBalance(
+                    isAvailable: true,
+                    currency: "USD",
+                    totalBalance: 5.5
+                )
+            )
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "",
+                managementKey: "",
+                deepSeekAPIKey: "ds-key",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            deepSeekClientFactory: { _ in ds }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(client.fetchAccountsCount, 0)
+        XCTAssertEqual(store.accounts.count, 0)
+        XCTAssertEqual(store.deepSeekEntries.count, 1)
+        XCTAssertEqual(store.deepSeekEntries[0].usage?.totalBalance, 5.5)
+        XCTAssertEqual(store.balanceEntries.map(\.name), ["默认"])
+        XCTAssertEqual(store.balanceEntries[0].balanceText, "$5.50")
+        XCTAssertNil(store.globalError)
+    }
+
+    func testBalanceEntriesMergeSub2ThenDeepSeekInConfigOrder() async {
+        let client = FakeClient(accounts: [], weekly: [:])
+        let sub2 = FakeSub2APIClient(
+            result: .success(
+                Sub2APIUsage(
+                    mode: "unrestricted",
+                    planName: "Pro",
+                    unit: "USD",
+                    balance: 10,
+                    remaining: 10,
+                    quota: nil,
+                    subscription: nil
+                )
+            )
+        )
+        let ds = FakeDeepSeekClient(
+            result: .success(
+                DeepSeekBalance(isAvailable: true, currency: "CNY", totalBalance: 30)
+            )
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                sub2APIConnections: [Sub2APIConnection(id: "s1", name: "主账户", baseURL: "https://a.example", apiKey: "k1")],
+                deepSeekConnections: [DeepSeekConnection(id: "d1", name: "DeepSeek", apiKey: "ds-key")],
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            sub2APIClientFactory: { _ in sub2 },
+            deepSeekClientFactory: { _ in ds }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.balanceEntries.map(\.name), ["主账户", "DeepSeek"])
+        XCTAssertEqual(store.balanceEntries.map(\.balanceText), ["$10.00", "¥30.00"])
+    }
+
+    func testDeepSeekFailureIsolatesFromOtherSources() async {
+        let accounts = [AuthAccount(provider: "xai", email: "ok@x.ai", name: "ok.json", authIndex: "a")]
+        let client = FakeClient(
+            accounts: accounts,
+            weekly: [
+                "a": .success(WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: nil, productUsage: []))
+            ]
+        )
+        let ds = FakeDeepSeekClient(result: .failure(DeepSeekAPIClientError.httpStatus(500, "balance down")))
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                deepSeekAPIKey: "ds-key",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            deepSeekClientFactory: { _ in ds }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.accounts.count, 1)
+        XCTAssertEqual(store.accounts[0].weekly?.usedPercent, 10)
+        XCTAssertEqual(store.deepSeekEntries[0].error?.contains("balance down"), true)
+        XCTAssertNil(store.globalError, "partial balance failure must not surface as global error")
     }
 }
 
@@ -614,6 +719,23 @@ private final class FakeSub2APIClient: Sub2APIClientProtocol, @unchecked Sendabl
     }
 
     func fetchUsage() async throws -> Sub2APIUsage {
+        switch result {
+        case .success(let value):
+            return value
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+private final class FakeDeepSeekClient: DeepSeekClientProtocol, @unchecked Sendable {
+    var result: Result<DeepSeekBalance, Error>
+
+    init(result: Result<DeepSeekBalance, Error>) {
+        self.result = result
+    }
+
+    func fetchBalance() async throws -> DeepSeekBalance {
         switch result {
         case .success(let value):
             return value

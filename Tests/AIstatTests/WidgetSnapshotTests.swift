@@ -126,16 +126,45 @@ final class WidgetSnapshotTests: XCTestCase {
             ]
         )
 
-        let empty = full.filtered(cliProxySourceIDs: [], sub2SourceIDs: [])
+        let empty = full.filtered(cliProxySourceIDs: [], balanceSourceID: nil)
         XCTAssertFalse(empty.isConfigured)
         XCTAssertTrue(empty.accounts.isEmpty)
         XCTAssertTrue(empty.sub2Entries.isEmpty)
 
-        let partial = full.filtered(cliProxySourceIDs: ["cli-1"], sub2SourceIDs: ["s2"])
+        let partial = full.filtered(cliProxySourceIDs: ["cli-1"], balanceSourceID: "s2")
         XCTAssertTrue(partial.isConfigured)
         XCTAssertEqual(partial.accounts.map(\.id), ["a1"])
         XCTAssertEqual(partial.sub2Entries.map(\.id), ["s2"])
         XCTAssertEqual(partial.sub2BalanceText, "$2")
+    }
+
+    func testFilteredSnapshotBySingleBalanceSourceKeepsOnlyOne() {
+        let full = WidgetSnapshot(
+            isConfigured: true,
+            accounts: [],
+            sub2Entries: [
+                WidgetSub2Entry(id: "s1", name: "主账户", balanceText: "$1"),
+                WidgetSub2Entry(id: "d1", name: "DeepSeek", balanceText: "¥20.00")
+            ]
+        )
+
+        let single = full.filtered(cliProxySourceIDs: [], balanceSourceID: "d1")
+        XCTAssertTrue(single.isConfigured)
+        XCTAssertEqual(single.sub2Entries.map(\.id), ["d1"])
+        XCTAssertEqual(single.sub2BalanceText, "¥20.00")
+
+        let none = full.filtered(cliProxySourceIDs: [], balanceSourceID: nil)
+        XCTAssertFalse(none.isConfigured)
+        XCTAssertTrue(none.sub2Entries.isEmpty)
+    }
+
+    func testDeepSeekSourceKindRoundTrip() {
+        let info = WidgetSourceInfo(id: "d1", name: "DeepSeek", kind: WidgetSourceKind.deepseek.rawValue)
+        XCTAssertEqual(info.sourceKind, .deepseek)
+        XCTAssertEqual(info.displayName, "DeepSeek")
+
+        let noName = WidgetSourceInfo(id: "d2", name: "", kind: WidgetSourceKind.deepseek.rawValue)
+        XCTAssertEqual(noName.displayName, "DeepSeek")
     }
 
     func testProviderResolve() {

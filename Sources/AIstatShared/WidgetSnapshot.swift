@@ -126,11 +126,12 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 
     /// Filter by per-widget App Intent selection. Empty selection → empty payload with `isConfigured = false`.
+    /// `balanceSourceID` is single-select (Sub2API or DeepSeek share one list).
     public func filtered(
         cliProxySourceIDs: Set<String>,
-        sub2SourceIDs: Set<String>
+        balanceSourceID: String?
     ) -> WidgetSnapshot {
-        let hasSelection = !cliProxySourceIDs.isEmpty || !sub2SourceIDs.isEmpty
+        let hasSelection = !cliProxySourceIDs.isEmpty || balanceSourceID != nil
         guard hasSelection else {
             var empty = self
             empty.isConfigured = false
@@ -148,7 +149,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             guard let sourceID = entry.sourceID else { return false }
             return cliProxySourceIDs.contains(sourceID)
         }
-        next.sub2Entries = sub2Entries.filter { sub2SourceIDs.contains($0.id) }
+        next.sub2Entries = sub2Entries.filter { $0.id == balanceSourceID }
 
         let primary = next.primarySub2Entry
         next.sub2BalanceText = primary?.balanceText
@@ -161,6 +162,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
 public enum WidgetSourceKind: String, Codable, Sendable {
     case cliproxy
     case sub2api
+    case deepseek
 }
 
 /// Named data source for widget configuration pickers (no credentials).
@@ -185,6 +187,7 @@ public struct WidgetSourceInfo: Codable, Equatable, Identifiable, Sendable {
         switch sourceKind {
         case .cliproxy: return "CLIProxyAPI"
         case .sub2api: return "Sub2API"
+        case .deepseek: return "DeepSeek"
         }
     }
 }

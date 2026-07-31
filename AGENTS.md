@@ -1,6 +1,6 @@
 # aistat
 
-macOS menu bar quota viewer for AI subscription accounts via CLIProxyAPI / Sub2API.
+macOS menu bar quota viewer for AI subscription accounts via CLIProxyAPI / Sub2API / DeepSeek.
 
 ## Stack
 
@@ -33,6 +33,15 @@ Auth header: `Authorization: Bearer <management_key>` (also accepts `X-Managemen
 
 Filter first version to `provider == "xai"` (Grok) accounts.
 
+## DeepSeek (官方余额)
+
+Auth header: `Authorization: Bearer <api_key>` (fixed base URL `https://api.deepseek.com`, no user-configured host).
+
+1. `GET /user/balance` → `{"is_available": bool, "balance_infos": [{"currency": "USD", "total_balance": "12.35", "granted_balance": "0", "topped_up_balance": "12.35"}, ...]}`. Balance values are JSON **strings**.
+2. Currency selection order (CodexBar): USD > 0 → any > 0 → USD → first. `is_available == false` with no balance shows an unavailable error.
+
+Model: `DeepSeekBalance` / `DeepSeekUsageEntry` in `Models/Quota.swift`; client in `Services/DeepSeekClient.swift`.
+
 ## Desktop Widgets (WidgetKit)
 
 - Extension product: `aistat-widget` → packaged as `AIstat.app/Contents/PlugIns/AIstatWidget.appex`
@@ -48,11 +57,11 @@ Filter first version to `provider == "xai"` (Grok) accounts.
 
 ## Multi-connection config
 
-- `AppConfiguration` holds arrays: `cliProxyConnections` / `sub2APIConnections` (each with `id`, `name`, credentials).
+- `AppConfiguration` holds arrays: `cliProxyConnections` / `sub2APIConnections` / `deepSeekConnections` (each with `id`, `name`, credentials; DeepSeek has no `baseURL` — official endpoint is fixed).
 - Settings UX: single **添加账号** sheet (pick type → form); each connection is its own sidebar tab.
 - Per CLIProxy connection: `preferNearRefreshAccounts` (priority write-back is host-local).
-- Menu bar always shows **all** connections (CLIProxy grouped by name; Sub2 balances prefix name).
-- Desktop widgets: per-instance `AIstatWidgetConfigurationIntent` (App Intents) selects CLIProxy / Sub2 sources from snapshot `sources` catalog — not global config flags.
+- Menu bar always shows **all** connections (CLIProxy grouped by name; Sub2 / DeepSeek balances prefix name).
+- Desktop widgets: per-instance `AIstatWidgetConfigurationIntent` (App Intents) selects CLIProxy sources (multi) and a single balance source (Sub2API + DeepSeek share one picker list) from snapshot `sources` catalog — not global config flags.
 - Host publishes full privacy-safe snapshot; widget timeline filters by intent selection.
 - Legacy single-field config migrates to one named connection (`默认`) on load.
 

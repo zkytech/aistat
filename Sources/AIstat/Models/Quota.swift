@@ -132,6 +132,115 @@ struct Sub2APISubscription: Decodable, Sendable, Equatable {
     }
 }
 
+// MARK: - DeepSeek 官方余额
+
+struct DeepSeekBalance: Decodable, Sendable, Equatable {
+    let isAvailable: Bool
+    /// 选出的币种（余额信息为空时为 nil）。
+    let currency: String?
+    /// 选出的币种总余额（字符串转数值；余额信息为空时为 nil）。
+    let totalBalance: Double?
+
+    init(isAvailable: Bool, currency: String?, totalBalance: Double?) {
+        self.isAvailable = isAvailable
+        self.currency = currency
+        self.totalBalance = totalBalance
+    }
+
+    /// `is_available == false` 且无任何余额时视为不可用。
+    var unavailableMessage: String? {
+        if !isAvailable && totalBalance == nil {
+            return "账户不可用"
+        }
+        return nil
+    }
+
+    private struct Info: Decodable {
+        let currency: String
+        let totalBalance: Double?
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            currency = try container.decodeIfPresent(String.self, forKey: .currency) ?? ""
+            totalBalance = try container.decodeIfPresent(FlexibleDouble.self, forKey: .totalBalance)?.value
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case currency
+            case totalBalance = "total_balance"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isAvailable = "is_available"
+        case balanceInfos = "balance_infos"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isAvailable = try container.decodeIfPresent(Bool.self, forKey: .isAvailable) ?? true
+        let infos = try container.decodeIfPresent([Info].self, forKey: .balanceInfos) ?? []
+
+        // 币种选择顺序：USD 且 >0 → 任一 >0 → USD → 第一个。
+        let selected = infos.first(where: { $0.currency.uppercased() == "USD" && ($0.totalBalance ?? 0) > 0 })
+            ?? infos.first(where: { ($0.totalBalance ?? 0) > 0 })
+            ?? infos.first(where: { $0.currency.uppercased() == "USD" })
+            ?? infos.first
+        currency = selected?.currency
+        totalBalance = selected?.totalBalance
+    }
+}
+
+/// One DeepSeek official API connection balance result.
+struct DeepSeekUsageEntry: Identifiable, Sendable, Equatable {
+    let connectionID: String
+    let connectionName: String
+    var usage: DeepSeekBalance?
+    var error: String?
+
+    var id: String { connectionID }
+}
+
+// MARK: - 统一余额行（Sub2API + DeepSeek）
+
+/// Menu bar / widget shared balance row with a pre-formatted text.
+struct BalanceEntry: Identifiable, Sendable, Equatable {
+    let id: String
+    let name: String
+    let balanceText: String?
+    let planName: String?
+    let error: String?
+}
+
+enum BalanceFormatter {
+    /// 常见币种用货币符号前缀：`$12.35`、`¥25.00`、`€12.35`、`£12.35`；
+    /// 其他币种回退为 `12.35 XXX`（大写代码）。
+    static func string(_ value: Double, unit: String?) -> String {
+        let amount = String(format: "%.2f", value)
+        let raw = (unit ?? "USD").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let symbol = Self.symbol(for: raw) {
+            return "\(symbol)\(amount)"
+        }
+        let code = raw.isEmpty ? "USD" : raw.uppercased()
+        return "\(amount) \(code)"
+    }
+
+    private static func symbol(for unit: String) -> String? {
+        switch unit.uppercased() {
+        case "USD", "US$", "$":
+            return "$"
+        case "CNY", "RMB", "¥":
+            return "¥"
+        case "EUR", "€":
+            return "€"
+        case "GBP", "£":
+            return "£"
+        default:
+            return nil
+        }
+    }
+}
+
 struct AccountQuota: Identifiable, Sendable, Equatable {
     /// Owning CLIProxyAPI connection id (unique across multi-host configs).
     let connectionID: String

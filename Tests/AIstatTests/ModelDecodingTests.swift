@@ -225,6 +225,48 @@ final class ModelDecodingTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(subscription.availableBalance, 12.75)
     }
+
+    func testDeepSeekBalanceDecodesStringAmountsAndPicksCurrency() throws {
+        let json = """
+        {
+          "is_available": true,
+          "balance_infos": [
+            {"currency": "CNY", "total_balance": "50", "granted_balance": "0", "topped_up_balance": "50"},
+            {"currency": "USD", "total_balance": "3.5", "granted_balance": "0", "topped_up_balance": "3.5"}
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let balance = try JSONDecoder().decode(DeepSeekBalance.self, from: json)
+        XCTAssertEqual(balance.isAvailable, true)
+        // USD with positive balance wins.
+        XCTAssertEqual(balance.currency, "USD")
+        XCTAssertEqual(balance.totalBalance ?? -1, 3.5, accuracy: 0.0001)
+        XCTAssertNil(balance.unavailableMessage)
+    }
+
+    func testDeepSeekBalanceEmptyInfoIsUnavailable() throws {
+        let json = Data("""
+        {"is_available": false, "balance_infos": []}
+        """.utf8)
+
+        let balance = try JSONDecoder().decode(DeepSeekBalance.self, from: json)
+        XCTAssertEqual(balance.isAvailable, false)
+        XCTAssertNil(balance.currency)
+        XCTAssertNil(balance.totalBalance)
+        XCTAssertEqual(balance.unavailableMessage, "账户不可用")
+    }
+
+    func testBalanceFormatter() {
+        XCTAssertEqual(BalanceFormatter.string(12.4, unit: "USD"), "$12.40")
+        XCTAssertEqual(BalanceFormatter.string(12.4, unit: "$"), "$12.40")
+        XCTAssertEqual(BalanceFormatter.string(25, unit: "CNY"), "¥25.00")
+        XCTAssertEqual(BalanceFormatter.string(25, unit: "RMB"), "¥25.00")
+        XCTAssertEqual(BalanceFormatter.string(12.4, unit: "EUR"), "€12.40")
+        XCTAssertEqual(BalanceFormatter.string(12.4, unit: "GBP"), "£12.40")
+        XCTAssertEqual(BalanceFormatter.string(25, unit: "JPY"), "25.00 JPY")
+        XCTAssertEqual(BalanceFormatter.string(25, unit: nil), "$25.00")
+    }
     func testDisplayDateFormatterUsesLocalWallClockFormat() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!

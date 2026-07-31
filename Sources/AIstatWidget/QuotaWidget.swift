@@ -81,12 +81,19 @@ struct QuotaWidgetEntry: TimelineEntry {
                         name: "主账户",
                         balanceText: "$12.40",
                         planName: "Pro"
+                    ),
+                    WidgetSub2Entry(
+                        id: "demo-deepseek",
+                        name: "DeepSeek",
+                        balanceText: "¥25.00",
+                        planName: nil
                     )
                 ],
                 sources: [
                     WidgetSourceInfo(id: "demo-cli", name: "家里", kind: WidgetSourceKind.cliproxy.rawValue),
                     WidgetSourceInfo(id: "demo-cli-2", name: "公司", kind: WidgetSourceKind.cliproxy.rawValue),
-                    WidgetSourceInfo(id: "demo-sub2", name: "主账户", kind: WidgetSourceKind.sub2api.rawValue)
+                    WidgetSourceInfo(id: "demo-sub2", name: "主账户", kind: WidgetSourceKind.sub2api.rawValue),
+                    WidgetSourceInfo(id: "demo-deepseek", name: "DeepSeek", kind: WidgetSourceKind.deepseek.rawValue)
                 ],
                 sub2BalanceText: "$12.40",
                 sub2PlanName: "Pro"

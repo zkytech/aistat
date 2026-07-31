@@ -71,7 +71,7 @@ struct MenuBarContentView: View {
     @ViewBuilder
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !store.sub2APIEntries.isEmpty || store.configuration.isSub2APIConfigured {
+            if !store.balanceEntries.isEmpty || store.configuration.hasBalanceSources {
                 sub2APISection
             }
 
@@ -82,7 +82,7 @@ struct MenuBarContentView: View {
                     Text(globalError)
                         .font(.system(size: 12))
                         .foregroundStyle(.red)
-                    Text("打开设置检查 CLIProxyAPI / Sub2API 连接。")
+                    Text("打开设置检查 CLIProxyAPI / Sub2API / DeepSeek 连接。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -99,8 +99,8 @@ struct MenuBarContentView: View {
                         }
                     }
                 }
-            } else if !store.configuration.isSub2APIConfigured {
-                Text("请先在设置中配置 CLIProxyAPI 或 Sub2API。")
+            } else if !store.configuration.hasBalanceSources {
+                Text("请先在设置中配置 CLIProxyAPI、Sub2API 或 DeepSeek。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -170,10 +170,10 @@ struct MenuBarContentView: View {
 
     private var sub2APISection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(displaySub2Entries) { entry in
+            ForEach(displayBalanceEntries) { entry in
                 HStack(spacing: 10) {
                     Label {
-                        Text(entry.connectionName)
+                        Text(entry.name)
                             .lineLimit(1)
                     } icon: {
                         Image(systemName: "creditcard")
@@ -182,22 +182,15 @@ struct MenuBarContentView: View {
 
                     Spacer(minLength: 8)
 
-                    if let planName = entry.usage?.planName, !planName.isEmpty {
-                        Text(planName)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
                     if let error = entry.error {
                         Text("错误")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.red)
                             .help(error)
-                    } else if let usage = entry.usage, let balance = usage.availableBalance {
-                        Text(formattedBalance(balance, unit: usage.unit))
+                    } else if let balanceText = entry.balanceText {
+                        Text(balanceText)
                             .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                            .accessibilityLabel("\(entry.connectionName) 可用余额 \(formattedBalance(balance, unit: usage.unit))")
+                            .accessibilityLabel("\(entry.name) 可用余额 \(balanceText)")
                     } else if store.isRefreshing {
                         Text("加载中…")
                             .font(.system(size: 11))
@@ -218,30 +211,21 @@ struct MenuBarContentView: View {
         .padding(.horizontal, 4)
     }
 
-    /// Prefer live results; if not yet refreshed, show configured connection placeholders.
-    private var displaySub2Entries: [Sub2APIUsageEntry] {
-        if !store.sub2APIEntries.isEmpty {
-            return store.sub2APIEntries
+    /// Prefer live results; if not yet refreshed, show configured connection placeholders
+    /// (Sub2API then DeepSeek).
+    private var displayBalanceEntries: [BalanceEntry] {
+        if !store.balanceEntries.isEmpty {
+            return store.balanceEntries
         }
         return store.configuration.sub2APIConnections
             .filter(\.isConfigured)
             .map {
-                Sub2APIUsageEntry(
-                    connectionID: $0.id,
-                    connectionName: $0.displayName,
-                    usage: nil,
-                    error: nil
-                )
+                BalanceEntry(id: $0.id, name: $0.displayName, balanceText: nil, planName: nil, error: nil)
+            } + store.configuration.deepSeekConnections
+            .filter(\.isConfigured)
+            .map {
+                BalanceEntry(id: $0.id, name: $0.displayName, balanceText: nil, planName: nil, error: nil)
             }
-    }
-
-    private func formattedBalance(_ value: Double, unit: String?) -> String {
-        let amount = String(format: "%.2f", value)
-        let normalizedUnit = (unit ?? "USD").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        if normalizedUnit == "USD" || normalizedUnit == "$" {
-            return "$\(amount)"
-        }
-        return "\(amount) \(normalizedUnit)"
     }
 
     private var footer: some View {

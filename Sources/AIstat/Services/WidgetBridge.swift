@@ -9,7 +9,7 @@ import WidgetKit
 enum WidgetBridge {
     static func publish(
         accounts: [AccountQuota],
-        sub2Entries: [Sub2APIUsageEntry],
+        balanceEntries: [BalanceEntry],
         sources: [WidgetSourceInfo],
         globalError: String?,
         isConfigured: Bool,
@@ -31,20 +31,12 @@ enum WidgetBridge {
             )
         }
 
-        let widgetSub2: [WidgetSub2Entry] = sub2Entries.map { entry in
-            var balanceText: String?
-            var planName: String?
-            if let usage = entry.usage {
-                if let balance = usage.availableBalance {
-                    balanceText = formattedBalance(balance, unit: usage.unit)
-                }
-                planName = usage.planName
-            }
-            return WidgetSub2Entry(
-                id: entry.connectionID,
-                name: entry.connectionName,
-                balanceText: balanceText,
-                planName: planName,
+        let widgetSub2: [WidgetSub2Entry] = balanceEntries.map { entry in
+            WidgetSub2Entry(
+                id: entry.id,
+                name: entry.name,
+                balanceText: entry.balanceText,
+                planName: entry.planName,
                 error: entry.error
             )
         }
@@ -80,14 +72,5 @@ enum WidgetBridge {
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
-    }
-
-    private static func formattedBalance(_ value: Double, unit: String?) -> String {
-        let amount = String(format: "%.2f", value)
-        let normalizedUnit = (unit ?? "USD").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        if normalizedUnit == "USD" || normalizedUnit == "$" {
-            return "$\(amount)"
-        }
-        return "\(amount) \(normalizedUnit)"
     }
 }

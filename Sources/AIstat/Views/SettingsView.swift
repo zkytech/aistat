@@ -6,6 +6,7 @@ import SwiftUI
 private enum SettingsAccountKind: String, CaseIterable, Identifiable {
     case cliproxyapi
     case sub2api
+    case deepseek
 
     var id: String { rawValue }
 
@@ -13,6 +14,7 @@ private enum SettingsAccountKind: String, CaseIterable, Identifiable {
         switch self {
         case .cliproxyapi: return "CLIProxyAPI"
         case .sub2api: return "Sub2API"
+        case .deepseek: return "DeepSeek"
         }
     }
 
@@ -20,6 +22,7 @@ private enum SettingsAccountKind: String, CaseIterable, Identifiable {
         switch self {
         case .cliproxyapi: return "Management API"
         case .sub2api: return "用量与余额"
+        case .deepseek: return "官方余额"
         }
     }
 
@@ -31,6 +34,7 @@ private enum SettingsAccountKind: String, CaseIterable, Identifiable {
         switch self {
         case .cliproxyapi: return "server.rack"
         case .sub2api: return "arrow.triangle.2.circlepath.circle"
+        case .deepseek: return "bolt.horizontal.circle"
         }
     }
 }
@@ -38,6 +42,7 @@ private enum SettingsAccountKind: String, CaseIterable, Identifiable {
 private enum SettingsPane: Hashable {
     case cliProxy(String)
     case sub2(String)
+    case deepSeek(String)
     case general
 }
 
@@ -87,6 +92,7 @@ struct SettingsView: View {
     @State private var selectedPane: SettingsPane = .general
     @State private var cliProxyConnections: [CLIProxyConnection] = []
     @State private var sub2APIConnections: [Sub2APIConnection] = []
+    @State private var deepSeekConnections: [DeepSeekConnection] = []
     @State private var refreshIntervalSeconds: Int = AppConfiguration.defaultRefreshIntervalSeconds
     @State private var launchAtLoginEnabled: Bool = false
     @State private var launchAtLoginHint: String?
@@ -110,7 +116,8 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAddSheet) {
             AddAccountSheet(
                 existingCLIProxyCount: cliProxyConnections.count,
-                existingSub2Count: sub2APIConnections.count
+                existingSub2Count: sub2APIConnections.count,
+                existingDeepSeekCount: deepSeekConnections.count
             ) { result in
                 applyAddResult(result)
             }
@@ -145,8 +152,17 @@ struct SettingsView: View {
                             kind: .sub2api
                         )
                     }
+                    ForEach(deepSeekConnections) { connection in
+                        accountSidebarRow(
+                            pane: .deepSeek(connection.id),
+                            title: connection.displayName,
+                            subtitle: SettingsAccountKind.deepseek.subtitle,
+                            configured: connection.isConfigured,
+                            kind: .deepseek
+                        )
+                    }
 
-                    if cliProxyConnections.isEmpty && sub2APIConnections.isEmpty {
+                    if cliProxyConnections.isEmpty && sub2APIConnections.isEmpty && deepSeekConnections.isEmpty {
                         Text("尚未添加账号")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -302,6 +318,12 @@ struct SettingsView: View {
                         } else {
                             missingAccountPlaceholder
                         }
+                    case .deepSeek(let id):
+                        if let index = deepSeekConnections.firstIndex(where: { $0.id == id }) {
+                            deepSeekDetail(index: index)
+                        } else {
+                            missingAccountPlaceholder
+                        }
                     case .general:
                         generalDetail
                     }
@@ -407,6 +429,41 @@ struct SettingsView: View {
 
         Button(role: .destructive) {
             deleteSub2(id: connection.id)
+        } label: {
+            Label("删除此账号", systemImage: "trash")
+        }
+        .buttonStyle(.borderless)
+    }
+
+    @ViewBuilder
+    private func deepSeekDetail(index: Int) -> some View {
+        let connection = deepSeekConnections[index]
+        detailHeader(
+            kind: .deepseek,
+            title: connection.displayName,
+            description: "连接 DeepSeek 官方余额接口，读取账户可用余额。",
+            configured: connection.isConfigured
+        )
+
+        settingsSection(title: "连接配置", subtitle: "名称会显示在余额前。") {
+            settingsField("名称", hint: "显示在余额前缀") {
+                TextField("例如：主账户 / 备用", text: bindingDeepSeek(index).name)
+                    .textFieldStyle(.roundedBorder)
+            }
+            settingsField("API Key", hint: "作为 Bearer Token 发送") {
+                SecureField("仅保存在本机", text: bindingDeepSeek(index).apiKey)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+
+        settingsSection(title: "说明", subtitle: "本连接在菜单栏中始终展示。") {
+            infoRow(icon: "creditcard", text: "菜单栏余额前缀为连接名称。")
+            infoRow(icon: "server.rack", text: "使用 DeepSeek 官方余额接口（https://api.deepseek.com/user/balance），无需填写 Base URL。")
+            infoRow(icon: "square.grid.2x2", text: "桌面小组件可在每个实例的编辑界面单独选择是否展示本连接。")
+        }
+
+        Button(role: .destructive) {
+            deleteDeepSeek(id: connection.id)
         } label: {
             Label("删除此账号", systemImage: "trash")
         }
@@ -631,6 +688,13 @@ struct SettingsView: View {
         )
     }
 
+    private func bindingDeepSeek(_ index: Int) -> Binding<DeepSeekConnection> {
+        Binding(
+            get: { deepSeekConnections[index] },
+            set: { deepSeekConnections[index] = $0 }
+        )
+    }
+
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
             get: { launchAtLoginEnabled },
@@ -665,6 +729,11 @@ struct SettingsView: View {
             selectedPane = .sub2(connection.id)
             statusMessage = "已添加 \(connection.displayName)，请填写完整后保存"
             isError = false
+        case .deepSeek(let connection):
+            deepSeekConnections.append(connection)
+            selectedPane = .deepSeek(connection.id)
+            statusMessage = "已添加 \(connection.displayName)，请填写完整后保存"
+            isError = false
         }
     }
 
@@ -686,11 +755,22 @@ struct SettingsView: View {
         isError = false
     }
 
+    private func deleteDeepSeek(id: String) {
+        deepSeekConnections.removeAll { $0.id == id }
+        if case .deepSeek(let selected) = selectedPane, selected == id {
+            selectFallbackPane()
+        }
+        statusMessage = "已从列表移除，点击「保存并刷新」写入配置"
+        isError = false
+    }
+
     private func selectFallbackPane() {
         if let first = cliProxyConnections.first {
             selectedPane = .cliProxy(first.id)
         } else if let first = sub2APIConnections.first {
             selectedPane = .sub2(first.id)
+        } else if let first = deepSeekConnections.first {
+            selectedPane = .deepSeek(first.id)
         } else {
             selectedPane = .general
         }
@@ -699,6 +779,7 @@ struct SettingsView: View {
     private func loadFromStore() {
         cliProxyConnections = store.configuration.cliProxyConnections
         sub2APIConnections = store.configuration.sub2APIConnections
+        deepSeekConnections = store.configuration.deepSeekConnections
         refreshIntervalSeconds = max(store.configuration.refreshIntervalSeconds, minimumRefreshSeconds)
         syncLaunchAtLoginFromSystem()
 
@@ -708,6 +789,8 @@ struct SettingsView: View {
                 selectedPane = .cliProxy(first.id)
             } else if let first = sub2APIConnections.first {
                 selectedPane = .sub2(first.id)
+            } else if let first = deepSeekConnections.first {
+                selectedPane = .deepSeek(first.id)
             }
         } else {
             ensureSelectedPaneExists()
@@ -722,6 +805,10 @@ struct SettingsView: View {
             }
         case .sub2(let id):
             if !sub2APIConnections.contains(where: { $0.id == id }) {
+                selectFallbackPane()
+            }
+        case .deepSeek(let id):
+            if !deepSeekConnections.contains(where: { $0.id == id }) {
                 selectFallbackPane()
             }
         case .general:
@@ -748,6 +835,7 @@ struct SettingsView: View {
         let configuration = AppConfiguration(
             cliProxyConnections: cliProxyConnections,
             sub2APIConnections: sub2APIConnections,
+            deepSeekConnections: deepSeekConnections,
             refreshIntervalSeconds: max(refreshIntervalSeconds, minimumRefreshSeconds)
         )
 
@@ -768,11 +856,13 @@ struct SettingsView: View {
 private enum AddAccountResult {
     case cliProxy(CLIProxyConnection)
     case sub2(Sub2APIConnection)
+    case deepSeek(DeepSeekConnection)
 }
 
 private struct AddAccountSheet: View {
     let existingCLIProxyCount: Int
     let existingSub2Count: Int
+    let existingDeepSeekCount: Int
     let onComplete: (AddAccountResult) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -817,8 +907,10 @@ private struct AddAccountSheet: View {
 
                 Section {
                     TextField("名称", text: $name)
-                    TextField(kind == .cliproxyapi ? "Base URL" : "Base URL", text: $baseURL)
-                        .textFieldStyle(.roundedBorder)
+                    if kind != .deepseek {
+                        TextField("Base URL", text: $baseURL)
+                            .textFieldStyle(.roundedBorder)
+                    }
                     if kind == .cliproxyapi {
                         SecureField("Management Key", text: $credential)
                         Toggle("优先消耗即将刷新额度的账号", isOn: $preferNearRefreshAccounts)
@@ -826,7 +918,7 @@ private struct AddAccountSheet: View {
                         SecureField("API Key", text: $credential)
                     }
                 } header: {
-                    Text(kind == .cliproxyapi ? "CLIProxyAPI 连接" : "Sub2API 连接")
+                    Text(connectionHeader)
                 } footer: {
                     Text(kind == .cliproxyapi
                          ? "名称用于菜单栏分组；密钥仅保存在本机。"
@@ -859,15 +951,28 @@ private struct AddAccountSheet: View {
         }
     }
 
+    private var connectionHeader: String {
+        switch kind {
+        case .cliproxyapi: return "CLIProxyAPI 连接"
+        case .sub2api: return "Sub2API 连接"
+        case .deepseek: return "DeepSeek 连接"
+        }
+    }
+
     private var canCommit: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if kind == .deepseek {
+            return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func applyDefaultNameIfNeeded(force: Bool = false) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard force || trimmed.isEmpty || trimmed.hasPrefix("CLIProxy") || trimmed.hasPrefix("Sub2API") || trimmed == "默认" else {
+        guard force || trimmed.isEmpty || trimmed.hasPrefix("CLIProxy") || trimmed.hasPrefix("Sub2API")
+                || trimmed.hasPrefix("DeepSeek") || trimmed == "默认" else {
             return
         }
         switch kind {
@@ -877,6 +982,9 @@ private struct AddAccountSheet: View {
         case .sub2api:
             let index = existingSub2Count + 1
             name = index == 1 ? "默认" : "Sub2API \(index)"
+        case .deepseek:
+            let index = existingDeepSeekCount + 1
+            name = index == 1 ? "默认" : "DeepSeek \(index)"
         }
     }
 
@@ -898,6 +1006,12 @@ private struct AddAccountSheet: View {
                 apiKey: credential
             )
             onComplete(.sub2(connection))
+        case .deepseek:
+            let connection = DeepSeekConnection(
+                name: trimmedName,
+                apiKey: credential
+            )
+            onComplete(.deepSeek(connection))
         }
         dismiss()
     }

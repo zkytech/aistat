@@ -2,7 +2,7 @@
 
 macOS 菜单栏工具，用来查看 AI 订阅账号的额度使用情况。
 
-点击菜单栏图标即可展开面板，同时查看多个账号的周额度剩余、重置时间与状态；悬停账号可看更详细的周/月额度信息。数据源支持 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 与 Sub2API。
+点击菜单栏图标即可展开面板，同时查看多个账号的周额度剩余、重置时间与状态；悬停账号可看更详细的周/月额度信息。数据源支持 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)、Sub2API 与 DeepSeek 官方余额。
 
 ## 截图
 
@@ -15,10 +15,10 @@ macOS 菜单栏工具，用来查看 AI 订阅账号的额度使用情况。
 ## 功能
 
 - 菜单栏摘要：显示最紧账号的剩余百分比，例如 `额度 34%`
-- **多组 CLIProxyAPI / Sub2API 连接**：每组可单独命名；菜单栏按 CLIProxy 名称分组，Sub2 余额前缀连接名
+- **多组 CLIProxyAPI / Sub2API / DeepSeek 连接**：每组可单独命名；菜单栏按 CLIProxy 名称分组，Sub2 / DeepSeek 余额前缀连接名
 - 多订阅账号列表：状态点、周额度进度条（以剩余为主）、重置倒计时
 - 悬停详情：周额度、月度额度、账号状态
-- **桌面小组件（WidgetKit）**：Small / Medium / Large 列表样式，外加大号「额度仪表盘」环形图；**每个实例单独编辑选择展示账号**
+- **桌面小组件（WidgetKit）**：Small / Medium / Large 列表样式，外加大号「额度仪表盘」环形图；**每个实例单独编辑选择展示账号（CLIProxy 多选，余额账号 Sub2 / DeepSeek 单选）**
 - 自动刷新（默认 5 分钟，最短 1 分钟）；手动刷新最短间隔 1 分钟
 - 可选：优先消耗即将刷新额度的账号（默认关闭；**按每个 CLIProxy 连接独立配置**）
 - 可选：开机自动启动（系统登录项，默认关闭）
@@ -74,6 +74,7 @@ cd aistat
 |--------|----------|
 | CLIProxyAPI | 可添加多组：名称、Base URL、Management Key |
 | Sub2API | 可添加多组：名称、Base URL、API Key |
+| DeepSeek | 可添加多组：名称、API Key（使用官方余额接口，无需 Base URL） |
 
 CLIProxyAPI 每组专属选项：
 
@@ -82,7 +83,7 @@ CLIProxyAPI 每组专属选项：
 菜单栏展示：
 
 - 订阅账号按 **CLIProxyAPI 连接名称** 分组
-- Sub2API 余额前缀为 **连接名称**
+- Sub2API / DeepSeek 余额前缀为 **连接名称**
 
 共享设置：
 
@@ -118,6 +119,13 @@ CLIProxyAPI 每组专属选项：
       "apiKey": "<api-key>"
     }
   ],
+  "deepSeekConnections": [
+    {
+      "id": "…",
+      "name": "DeepSeek",
+      "apiKey": "<deepseek-api-key>"
+    }
+  ],
   "refreshIntervalSeconds": 300
 }
 ```
@@ -128,9 +136,9 @@ CLIProxyAPI 每组专属选项：
 
 ## 桌面小组件
 
-1. 在设置中通过 **添加账号** 配置 CLIProxyAPI / Sub2API 连接，并至少成功刷新一次（主程序写入脱敏快照）。
+1. 在设置中通过 **添加账号** 配置 CLIProxyAPI / Sub2API / DeepSeek 连接，并至少成功刷新一次（主程序写入脱敏快照）。
 2. 打开 **通知中心** 或桌面编辑模式 → 添加 **AIstat** / **账号额度** / **额度仪表盘**。
-3. **编辑该小组件实例**，在配置里选择要展示的 CLIProxyAPI / Sub2API 账号（每个实例独立；未选择时显示空状态）。
+3. **编辑该小组件实例**，在配置里选择要展示的 CLIProxyAPI 账号（多选）与余额账号（Sub2 / DeepSeek 单选；每个实例独立；未选择时显示空状态）。
 4. 可选样式：
    - **账号额度 · Small**：最紧账号的大号剩余百分比 + 进度条 + 重置倒计时
    - **账号额度 · Medium**：最多 3 个账号行 + Sub2 余额条

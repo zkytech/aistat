@@ -9,6 +9,7 @@ final class QuotaStore: ObservableObject {
 
     @Published private(set) var accountGroups: [CLIProxyAccountGroup] = []
     @Published private(set) var sub2APIEntries: [Sub2APIUsageEntry] = []
+    @Published private(set) var deepSeekEntries: [DeepSeekUsageEntry] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var nextRefreshAvailableAt: Date?
@@ -21,8 +22,41 @@ final class QuotaStore: ObservableObject {
         accountGroups.flatMap(\.accounts)
     }
 
+    /// Unified balance rows for the menu bar and widget snapshot: Sub2API then DeepSeek,
+    /// each in configuration order.
+    var balanceEntries: [BalanceEntry] {
+        let sub2: [BalanceEntry] = sub2APIEntries.map { entry in
+            let text = entry.usage.flatMap { usage -> String? in
+                guard let balance = usage.availableBalance else { return nil }
+                return BalanceFormatter.string(balance, unit: usage.unit)
+            }
+            return BalanceEntry(
+                id: entry.connectionID,
+                name: entry.connectionName,
+                balanceText: text,
+                planName: entry.usage?.planName,
+                error: entry.error
+            )
+        }
+        let deepSeek: [BalanceEntry] = deepSeekEntries.map { entry in
+            let text = entry.usage.flatMap { balance -> String? in
+                guard let total = balance.totalBalance else { return nil }
+                return BalanceFormatter.string(total, unit: balance.currency)
+            }
+            return BalanceEntry(
+                id: entry.connectionID,
+                name: entry.connectionName,
+                balanceText: text,
+                planName: nil,
+                error: entry.error
+            )
+        }
+        return sub2 + deepSeek
+    }
+
     private var clientFactory: (CLIProxyConnection) -> any CLIProxyClientProtocol
     private var sub2APIClientFactory: (Sub2APIConnection) -> any Sub2APIClientProtocol
+    private var deepSeekClientFactory: (DeepSeekConnection) -> any DeepSeekClientProtocol
     private var refreshTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var lastRefreshAttemptAt: Date?
@@ -40,12 +74,14 @@ final class QuotaStore: ObservableObject {
         includeMonthly: Bool = true,
         clientFactory: @escaping (CLIProxyConnection) -> any CLIProxyClientProtocol = { CLIProxyClient(connection: $0) },
         sub2APIClientFactory: @escaping (Sub2APIConnection) -> any Sub2APIClientProtocol = { Sub2APIClient(connection: $0) },
+        deepSeekClientFactory: @escaping (DeepSeekConnection) -> any DeepSeekClientProtocol = { DeepSeekClient(connection: $0) },
         nowProvider: @escaping () -> Date = { Date() }
     ) {
         self.configuration = configuration
         self.includeMonthly = includeMonthly
         self.clientFactory = clientFactory
         self.sub2APIClientFactory = sub2APIClientFactory
+        self.deepSeekClientFactory = deepSeekClientFactory
         self.nowProvider = nowProvider
         updateMenuTitle()
     }
@@ -109,11 +145,13 @@ final class QuotaStore: ObservableObject {
     private func performRefresh() async {
         let cliConnections = configuration.cliProxyConnections.filter(\.isConfigured)
         let sub2Connections = configuration.sub2APIConnections.filter(\.isConfigured)
+        let deepSeekConnections = configuration.deepSeekConnections.filter(\.isConfigured)
 
-        guard !cliConnections.isEmpty || !sub2Connections.isEmpty else {
+        guard !cliConnections.isEmpty || !sub2Connections.isEmpty || !deepSeekConnections.isEmpty else {
             globalError = CLIProxyClientError.notConfigured.localizedDescription
             accountGroups = []
             sub2APIEntries = []
+            deepSeekEntries = []
             updateMenuTitle()
             publishWidgetSnapshot(updatedAt: nowProvider())
             return
@@ -130,6 +168,7 @@ final class QuotaStore: ObservableObject {
         let previousByID = Dictionary(uniqueKeysWithValues: accountGroups.map { ($0.connectionID, $0) })
 
         async let sub2Results: [Sub2APIUsageEntry] = fetchAllSub2API(connections: sub2Connections)
+        async let deepSeekResults: [DeepSeekUsageEntry] = fetchAllDeepSeek(connections: deepSeekConnections)
 
         if cliConnections.isEmpty {
             accountGroups = []
@@ -165,11 +204,14 @@ final class QuotaStore: ObservableObject {
         }
 
         sub2APIEntries = await sub2Results
+        deepSeekEntries = await deepSeekResults
         lastRefreshAt = now
 
-        if accountGroups.isEmpty && sub2APIEntries.allSatisfy({ $0.usage == nil }) {
+        if accountGroups.isEmpty && sub2APIEntries.allSatisfy({ $0.usage == nil })
+            && deepSeekEntries.allSatisfy({ $0.usage == nil }) {
             if let firstError = groupErrors.first
-                ?? sub2APIEntries.compactMap(\.error).first {
+                ?? sub2APIEntries.compactMap(\.error).first
+                ?? deepSeekEntries.compactMap(\.error).first {
                 globalError = firstError
             } else {
                 globalError = nil
@@ -326,6 +368,46 @@ final class QuotaStore: ObservableObject {
         }
     }
 
+    private func fetchAllDeepSeek(connections: [DeepSeekConnection]) async -> [DeepSeekUsageEntry] {
+        guard !connections.isEmpty else { return [] }
+
+        return await withTaskGroup(of: (Int, DeepSeekUsageEntry).self) { group in
+            for (index, connection) in connections.enumerated() {
+                let client = deepSeekClientFactory(connection)
+                group.addTask {
+                    do {
+                        let balance = try await client.fetchBalance()
+                        return (
+                            index,
+                            DeepSeekUsageEntry(
+                                connectionID: connection.id,
+                                connectionName: connection.displayName,
+                                usage: balance,
+                                error: balance.unavailableMessage
+                            )
+                        )
+                    } catch {
+                        return (
+                            index,
+                            DeepSeekUsageEntry(
+                                connectionID: connection.id,
+                                connectionName: connection.displayName,
+                                usage: nil,
+                                error: error.localizedDescription
+                            )
+                        )
+                    }
+                }
+            }
+
+            var results: [(Int, DeepSeekUsageEntry)] = []
+            for await item in group {
+                results.append(item)
+            }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+    }
+
     private func publishWidgetSnapshot(updatedAt: Date) {
         // Full snapshot for all connections; each widget instance filters via App Intent config.
         let sources: [WidgetSourceInfo] =
@@ -341,11 +423,17 @@ final class QuotaStore: ObservableObject {
                     name: $0.displayName,
                     kind: WidgetSourceKind.sub2api.rawValue
                 )
+            } + configuration.deepSeekConnections.filter(\.isConfigured).map {
+                WidgetSourceInfo(
+                    id: $0.id,
+                    name: $0.displayName,
+                    kind: WidgetSourceKind.deepseek.rawValue
+                )
             }
 
         WidgetBridge.publish(
             accounts: accounts,
-            sub2Entries: sub2APIEntries,
+            balanceEntries: balanceEntries,
             sources: sources,
             globalError: globalError,
             isConfigured: configuration.hasAnyDataSource,

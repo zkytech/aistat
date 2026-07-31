@@ -154,7 +154,7 @@ struct MediumQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "编辑此小组件，选择要展示的 CLIProxyAPI / Sub2API 账号"
+                message: "编辑此小组件，选择要展示的 CLIProxyAPI 账号与余额账号"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceSM) {
@@ -227,7 +227,7 @@ struct LargeQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "编辑此小组件，选择要展示的 CLIProxyAPI / Sub2API 账号。"
+                message: "编辑此小组件，选择要展示的 CLIProxyAPI 账号与余额账号。"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceMD) {
@@ -344,7 +344,7 @@ struct LargeDashboardQuotaWidgetView: View {
         if !entry.snapshot.isConfigured {
             emptyChrome(
                 title: "未选择展示源",
-                message: "编辑此小组件，选择要展示的 CLIProxyAPI / Sub2API 账号。"
+                message: "编辑此小组件，选择要展示的 CLIProxyAPI 账号与余额账号。"
             )
         } else {
             VStack(alignment: .leading, spacing: WidgetTheme.spaceLG) {

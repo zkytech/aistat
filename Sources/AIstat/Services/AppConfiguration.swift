@@ -84,20 +84,53 @@ struct Sub2APIConnection: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// One DeepSeek official API account (API key only; base URL is fixed upstream).
+struct DeepSeekConnection: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var apiKey: String
+
+    init(
+        id: String = UUID().uuidString,
+        name: String = "",
+        apiKey: String = ""
+    ) {
+        self.id = id
+        self.name = name
+        self.apiKey = apiKey
+    }
+
+    var isConfigured: Bool {
+        !normalizedAPIKey.isEmpty
+    }
+
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "DeepSeek" : trimmed
+    }
+
+    var normalizedAPIKey: String {
+        apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 // MARK: - App configuration
 
 struct AppConfiguration: Codable, Equatable, Sendable {
     var cliProxyConnections: [CLIProxyConnection]
     var sub2APIConnections: [Sub2APIConnection]
+    var deepSeekConnections: [DeepSeekConnection]
     var refreshIntervalSeconds: Int
 
     init(
         cliProxyConnections: [CLIProxyConnection] = [],
         sub2APIConnections: [Sub2APIConnection] = [],
+        deepSeekConnections: [DeepSeekConnection] = [],
         refreshIntervalSeconds: Int = Self.defaultRefreshIntervalSeconds
     ) {
         self.cliProxyConnections = cliProxyConnections
         self.sub2APIConnections = sub2APIConnections
+        self.deepSeekConnections = deepSeekConnections
         self.refreshIntervalSeconds = refreshIntervalSeconds
     }
 
@@ -107,6 +140,8 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         managementKey: String,
         sub2APIBaseURL: String = "",
         sub2APIKey: String = "",
+        deepSeekAPIKey: String = "",
+        deepSeekName: String = "默认",
         refreshIntervalSeconds: Int,
         preferNearRefreshAccounts: Bool = false,
         cliProxyName: String = "默认",
@@ -137,15 +172,26 @@ struct AppConfiguration: Codable, Equatable, Sendable {
             ]
         }
 
+        var deepSeek: [DeepSeekConnection] = []
+        if !deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            deepSeek = [
+                DeepSeekConnection(
+                    name: deepSeekName,
+                    apiKey: deepSeekAPIKey
+                )
+            ]
+        }
+
         self.init(
             cliProxyConnections: cli,
             sub2APIConnections: sub2,
+            deepSeekConnections: deepSeek,
             refreshIntervalSeconds: refreshIntervalSeconds
         )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case cliProxyConnections, sub2APIConnections, refreshIntervalSeconds
+        case cliProxyConnections, sub2APIConnections, deepSeekConnections, refreshIntervalSeconds
         // Legacy keys (decode-only migration / ignored widget selection).
         case baseURL, managementKey, sub2APIBaseURL, sub2APIKey, preferNearRefreshAccounts
         case widgetCLIProxyConnectionIDs, widgetSub2APIConnectionIDs
@@ -159,6 +205,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         if container.contains(.cliProxyConnections) || container.contains(.sub2APIConnections) {
             cliProxyConnections = try container.decodeIfPresent([CLIProxyConnection].self, forKey: .cliProxyConnections) ?? []
             sub2APIConnections = try container.decodeIfPresent([Sub2APIConnection].self, forKey: .sub2APIConnections) ?? []
+            deepSeekConnections = try container.decodeIfPresent([DeepSeekConnection].self, forKey: .deepSeekConnections) ?? []
             // widget* IDs intentionally ignored — selection is per-widget instance.
         } else {
             // Migrate legacy single-connection config.
@@ -194,6 +241,9 @@ struct AppConfiguration: Codable, Equatable, Sendable {
             } else {
                 sub2APIConnections = []
             }
+
+            // Legacy config predates DeepSeek; no named connections to migrate.
+            deepSeekConnections = []
         }
     }
 
@@ -201,6 +251,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(cliProxyConnections, forKey: .cliProxyConnections)
         try container.encode(sub2APIConnections, forKey: .sub2APIConnections)
+        try container.encode(deepSeekConnections, forKey: .deepSeekConnections)
         try container.encode(refreshIntervalSeconds, forKey: .refreshIntervalSeconds)
     }
 
@@ -221,8 +272,18 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         sub2APIConnections.contains(where: \.isConfigured)
     }
 
+    /// At least one fully configured DeepSeek connection.
+    var isDeepSeekConfigured: Bool {
+        deepSeekConnections.contains(where: \.isConfigured)
+    }
+
+    /// Any balance-style source (Sub2API or DeepSeek).
+    var hasBalanceSources: Bool {
+        isSub2APIConfigured || isDeepSeekConfigured
+    }
+
     var hasAnyDataSource: Bool {
-        isConfigured || isSub2APIConfigured
+        isConfigured || isSub2APIConfigured || isDeepSeekConfigured
     }
 
     var refreshInterval: TimeInterval {
@@ -235,6 +296,10 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 
     func sub2APIConnection(id: String) -> Sub2APIConnection? {
         sub2APIConnections.first { $0.id == id }
+    }
+
+    func deepSeekConnection(id: String) -> DeepSeekConnection? {
+        deepSeekConnections.first { $0.id == id }
     }
 }
 

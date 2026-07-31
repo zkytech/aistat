@@ -40,7 +40,7 @@ struct CLIProxySourceQuery: EntityQuery {
 }
 
 struct Sub2SourceEntity: AppEntity, Identifiable {
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Sub2API 账号")
+    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "余额账号")
     static var defaultQuery = Sub2SourceQuery()
 
     var id: String
@@ -68,8 +68,9 @@ struct Sub2SourceQuery: EntityQuery {
 
     static func all() -> [Sub2SourceEntity] {
         let sources = (WidgetDataStore.load() ?? .empty).sources
+        // Sub2API 与 DeepSeek 共享同一个余额选择列表。
         return sources
-            .filter { $0.sourceKind == .sub2api }
+            .filter { $0.sourceKind == .sub2api || $0.sourceKind == .deepseek }
             .map { Sub2SourceEntity(id: $0.id, name: $0.displayName) }
     }
 }
@@ -78,32 +79,33 @@ struct Sub2SourceQuery: EntityQuery {
 
 struct AIstatWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "展示账号"
-    static var description = IntentDescription("为此小组件实例选择要展示的 CLIProxyAPI / Sub2API 账号。未选择时小组件为空。")
+    static var description = IntentDescription("为此小组件实例选择要展示的 CLIProxyAPI 账号与余额账号（Sub2API / DeepSeek 单选）。未选择时小组件为空。")
 
-    // Non-optional arrays with empty defaults — Optional<[AppEntity]> confuses
+    // Non-optional array (multi-select CLIProxy accounts) — Optional<[AppEntity]> confuses
     // appintentsmetadataprocessor ("Unable to determine value type").
     @Parameter(title: "CLIProxyAPI 账号", default: [])
     var cliProxyAccounts: [CLIProxySourceEntity]
 
-    @Parameter(title: "Sub2API 账号", default: [])
-    var sub2Accounts: [Sub2SourceEntity]
+    // Single-select balance source shared by Sub2API and DeepSeek.
+    @Parameter(title: "余额账号")
+    var balanceSource: Sub2SourceEntity?
 
     init() {
         self.cliProxyAccounts = []
-        self.sub2Accounts = []
+        self.balanceSource = nil
     }
 
-    init(cliProxyAccounts: [CLIProxySourceEntity], sub2Accounts: [Sub2SourceEntity]) {
+    init(cliProxyAccounts: [CLIProxySourceEntity], balanceSource: Sub2SourceEntity?) {
         self.cliProxyAccounts = cliProxyAccounts
-        self.sub2Accounts = sub2Accounts
+        self.balanceSource = balanceSource
     }
 
     var selectedCLIProxyIDs: Set<String> {
         Set(cliProxyAccounts.map(\.id))
     }
 
-    var selectedSub2IDs: Set<String> {
-        Set(sub2Accounts.map(\.id))
+    var selectedBalanceSourceID: String? {
+        balanceSource?.id
     }
 }
 
@@ -136,7 +138,7 @@ struct QuotaIntentTimelineProvider: AppIntentTimelineProvider {
         let full = WidgetDataStore.load() ?? .empty
         let filtered = full.filtered(
             cliProxySourceIDs: configuration.selectedCLIProxyIDs,
-            sub2SourceIDs: configuration.selectedSub2IDs
+            balanceSourceID: configuration.selectedBalanceSourceID
         )
         return QuotaWidgetEntry(date: Date(), snapshot: filtered)
     }

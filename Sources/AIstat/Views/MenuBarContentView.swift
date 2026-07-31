@@ -6,6 +6,7 @@ struct MenuBarContentView: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var hoveredAccountID: String?
+    @State private var hoveredBalanceID: String?
     @State private var hostWindow: NSWindow?
     @State private var detailPanelController = AccountDetailHoverPanelController()
 
@@ -27,10 +28,20 @@ struct MenuBarContentView: View {
             .onChange(of: hoveredAccountID) {
                 syncDetailPanel()
             }
+            .onChange(of: hoveredBalanceID) {
+                syncDetailPanel()
+            }
             .onChange(of: store.accounts) {
                 if let hoveredAccountID, store.accounts.contains(where: { $0.id == hoveredAccountID }) {
                     syncDetailPanel()
                 } else if hoveredAccountID != nil {
+                    clearHoveredAccount()
+                }
+            }
+            .onChange(of: store.balanceEntries) {
+                if let hoveredBalanceID, displayBalanceEntries.contains(where: { $0.id == hoveredBalanceID }) {
+                    syncDetailPanel()
+                } else if hoveredBalanceID != nil {
                     clearHoveredAccount()
                 }
             }
@@ -52,6 +63,11 @@ struct MenuBarContentView: View {
     private var detailItem: AccountQuota? {
         guard let hoveredAccountID else { return nil }
         return store.accounts.first(where: { $0.id == hoveredAccountID })
+    }
+
+    private var detailBalance: BalanceEntry? {
+        guard let hoveredBalanceID else { return nil }
+        return displayBalanceEntries.first(where: { $0.id == hoveredBalanceID })
     }
 
     private var header: some View {
@@ -182,6 +198,13 @@ struct MenuBarContentView: View {
 
                     Spacer(minLength: 8)
 
+                    if let daily = entry.dailyUsageText {
+                        Text("今日 \(daily)")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
                     if let error = entry.error {
                         Text("错误")
                             .font(.system(size: 11, weight: .medium))
@@ -199,6 +222,14 @@ struct MenuBarContentView: View {
                         Text("--")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+                .onHover { isInside in
+                    if isInside {
+                        selectHoveredBalance(entry.id)
                     }
                 }
             }
@@ -292,26 +323,46 @@ struct MenuBarContentView: View {
     /// changes and leaving either surface closes the card.
     private func selectHoveredAccount(_ accountID: String) {
         hoveredAccountID = accountID
+        hoveredBalanceID = nil
+        syncDetailPanel()
+    }
+
+    /// Balance row enter selects a balance source (Sub2API / DeepSeek).
+    private func selectHoveredBalance(_ balanceID: String) {
+        hoveredBalanceID = balanceID
+        hoveredAccountID = nil
         syncDetailPanel()
     }
 
     private func clearHoveredAccount() {
         hoveredAccountID = nil
+        hoveredBalanceID = nil
         detailPanelController.hide()
     }
 
     private func syncDetailPanel() {
-        guard let detailItem else {
-            detailPanelController.hide()
+        if let detailItem {
+            detailPanelController.show(
+                item: detailItem,
+                relativeTo: hostWindow,
+                onDismiss: {
+                    hoveredAccountID = nil
+                }
+            )
             return
         }
 
-        detailPanelController.show(
-            item: detailItem,
-            relativeTo: hostWindow,
-            onDismiss: {
-                hoveredAccountID = nil
-            }
-        )
+        if let detailBalance {
+            detailPanelController.show(
+                balance: detailBalance,
+                relativeTo: hostWindow,
+                onDismiss: {
+                    hoveredBalanceID = nil
+                }
+            )
+            return
+        }
+
+        detailPanelController.hide()
     }
 }

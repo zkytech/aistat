@@ -444,8 +444,14 @@ private struct MediumSub2Strip: View {
                     .font(WidgetTheme.monoCaption())
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                if let daily = entry.dailyUsageText {
+                    Text("今日 \(daily)")
+                        .font(WidgetTheme.captionFont())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
-            .accessibilityLabel("\(entry.displayLabel) 余额 \(balance)")
+            .accessibilityLabel("\(entry.displayLabel) 余额 \(balance)今日消费 \(entry.dailyUsageText ?? "无")")
         }
     }
 }
@@ -495,9 +501,15 @@ private enum LargeWidgetChrome {
                     .font(WidgetTheme.captionFont())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let daily = entry.dailyUsageText {
+                    Text("今日 \(daily)")
+                        .font(WidgetTheme.monoCaption())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(entry.displayLabel) \(balance)")
+            .accessibilityLabel("\(entry.displayLabel) \(balance)今日消费 \(entry.dailyUsageText ?? "无")")
         }
     }
 
@@ -518,8 +530,14 @@ private enum LargeWidgetChrome {
                 Text(balance)
                     .font(WidgetTheme.monoCaption())
                     .lineLimit(1)
+                if let daily = entry.dailyUsageText {
+                    Text("今日 \(daily)")
+                        .font(WidgetTheme.captionFont())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
-            .accessibilityLabel("\(entry.displayLabel) \(balance)")
+            .accessibilityLabel("\(entry.displayLabel) \(balance)今日消费 \(entry.dailyUsageText ?? "无")")
         }
     }
 

@@ -37,6 +37,7 @@ enum WidgetBridge {
                 name: entry.name,
                 balanceText: entry.balanceText,
                 planName: entry.planName,
+                dailyUsageText: entry.dailyUsageText,
                 error: entry.error
             )
         }

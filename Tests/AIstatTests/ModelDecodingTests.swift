@@ -226,6 +226,38 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(subscription.availableBalance, 12.75)
     }
 
+    func testSub2APIDailyUsageText() throws {
+        let withDaily = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"subscription","unit":"USD","subscription":{"daily_usage_usd":1.23,"daily_limit_usd":5,"monthly_usage_usd":7.25,"monthly_limit_usd":20}}
+        """.utf8))
+        XCTAssertEqual(withDaily.dailyUsageText, "$1.23")
+
+        let noDaily = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"unrestricted","unit":"USD","balance":12.16,"remaining":12.16}
+        """.utf8))
+        XCTAssertNil(noDaily.dailyUsageText)
+    }
+
+    func testSub2APIUsageTodayDrivesDailyText() throws {
+        // actual_cost preferred over list-price cost.
+        let actual = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"unrestricted","unit":"USD","usage":{"today":{"actual_cost":3.130292295,"cost":66.62117325}}}
+        """.utf8))
+        XCTAssertEqual(actual.dailyUsageText, "$3.13")
+
+        // Only cost present → fallback, and 0 must still be shown.
+        let zero = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"unrestricted","unit":"USD","usage":{"today":{"cost":0}}}
+        """.utf8))
+        XCTAssertEqual(zero.dailyUsageText, "$0.00")
+
+        // Actual cost of exactly 0 shows instead of a string amount.
+        let zeroActual = try JSONDecoder().decode(Sub2APIUsage.self, from: Data("""
+        {"mode":"unrestricted","unit":"USD","usage":{"today":{"actual_cost":0,"cost":0}}}
+        """.utf8))
+        XCTAssertEqual(zeroActual.dailyUsageText, "$0.00")
+    }
+
     func testDeepSeekBalanceDecodesStringAmountsAndPicksCurrency() throws {
         let json = """
         {

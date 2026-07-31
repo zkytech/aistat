@@ -300,6 +300,125 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertEqual(store.sub2APIEntries[0].error?.contains("balance down"), true)
     }
 
+    func testSub2APIDailyUsageFlowsIntoBalanceEntries() async {
+        let client = FakeClient(accounts: [], weekly: [:])
+        let sub2 = FakeSub2APIClient(
+            result: .success(
+                Sub2APIUsage(
+                    mode: "subscription",
+                    planName: "Pro",
+                    unit: "USD",
+                    balance: nil,
+                    remaining: nil,
+                    quota: nil,
+                    subscription: Sub2APISubscription(
+                        dailyUsageUSD: 1.23,
+                        dailyLimitUSD: 5,
+                        weeklyUsageUSD: 4.56,
+                        weeklyLimitUSD: 20,
+                        monthlyUsageUSD: 12.34,
+                        monthlyLimitUSD: 100
+                    )
+                )
+            )
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "",
+                managementKey: "",
+                sub2APIBaseURL: "https://sub2api.example",
+                sub2APIKey: "sub-key",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            sub2APIClientFactory: { _ in sub2 }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.balanceEntries.count, 1)
+        XCTAssertEqual(store.balanceEntries[0].balanceText, "$87.66")
+        XCTAssertEqual(store.balanceEntries[0].dailyUsageText, "$1.23")
+    }
+
+    func testSub2APIWithoutDailyUsageKeepsDailyTextNil() async {
+        let client = FakeClient(accounts: [], weekly: [:])
+        let sub2 = FakeSub2APIClient(
+            result: .success(
+                Sub2APIUsage(
+                    mode: "unrestricted",
+                    planName: nil,
+                    unit: "USD",
+                    balance: 8,
+                    remaining: 8,
+                    quota: nil,
+                    subscription: nil
+                )
+            )
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "",
+                managementKey: "",
+                sub2APIBaseURL: "https://sub2api.example",
+                sub2APIKey: "sub-key",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            sub2APIClientFactory: { _ in sub2 }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.balanceEntries.count, 1)
+        XCTAssertEqual(store.balanceEntries[0].balanceText, "$8.00")
+        XCTAssertNil(store.balanceEntries[0].dailyUsageText)
+    }
+
+    func testSub2APITodayUsageZeroStillFlowsIntoDailyText() async {
+        let client = FakeClient(accounts: [], weekly: [:])
+        let sub2 = FakeSub2APIClient(
+            result: .success(
+                Sub2APIUsage(
+                    mode: "unrestricted",
+                    planName: "钱包余额",
+                    unit: "USD",
+                    balance: 10,
+                    remaining: 10,
+                    quota: nil,
+                    subscription: nil,
+                    usage: Sub2APIUsageStats(
+                        today: Sub2APIUsageWindow(actualCost: 0, cost: 0),
+                        total: Sub2APIUsageWindow(actualCost: 0, cost: 0)
+                    )
+                )
+            )
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "",
+                managementKey: "",
+                sub2APIBaseURL: "https://sub2api.example",
+                sub2APIKey: "sub-key",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            sub2APIClientFactory: { _ in sub2 }
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.balanceEntries.count, 1)
+        XCTAssertEqual(store.balanceEntries[0].balanceText, "$10.00")
+        XCTAssertEqual(store.balanceEntries[0].dailyUsageText, "$0.00")
+    }
+
     func testSub2APIOnlyConfigurationStillRefreshesBalance() async {
         let client = FakeClient(accounts: [], weekly: [:])
         let sub2 = FakeSub2APIClient(

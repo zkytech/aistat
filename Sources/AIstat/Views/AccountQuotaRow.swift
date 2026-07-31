@@ -445,3 +445,99 @@ enum RelativeResetFormatter {
         WidgetResetFormatter.string(until: date, now: now)
     }
 }
+
+// MARK: - Balance source detail
+
+/// Hover detail card for a balance source (Sub2API / DeepSeek).
+struct BalanceEntryDetailView: View {
+    let entry: BalanceEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            content
+        }
+        .padding(.vertical, 8)
+        .frame(width: 300)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(entry.name) 余额详情")
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "creditcard")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Image(systemName: entry.error == nil ? "circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(entry.error == nil ? .green : .red)
+                .frame(width: 12, height: 12)
+                .accessibilityLabel(entry.error == nil ? "状态正常" : "状态错误")
+
+            Text(entry.name)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(2)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(entry.error == nil ? "正常" : "错误")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let error = entry.error {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    sectionTitle("余额", systemImage: "creditcard")
+                    detailRow("可用余额", entry.balanceText ?? "--")
+                    if let daily = entry.dailyUsageText {
+                        detailRow("今日消费", daily)
+                    }
+                    if let planName = entry.planName, !planName.isEmpty {
+                        detailRow("套餐", planName)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sectionTitle(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+}

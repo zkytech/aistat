@@ -60,7 +60,7 @@ final class WidgetSnapshotTests: XCTestCase {
                 )
             ],
             sub2Entries: [
-                WidgetSub2Entry(id: "s1", name: "主账户", balanceText: "$1.00", planName: "Pro")
+                WidgetSub2Entry(id: "s1", name: "主账户", balanceText: "$1.00", planName: "Pro", dailyUsageText: "$0.25")
             ],
             sub2BalanceText: "$1.00",
             sub2PlanName: "Pro"
@@ -74,7 +74,22 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(decoded.sub2BalanceText, "$1.00")
         XCTAssertEqual(decoded.sub2Entries.count, 1)
         XCTAssertEqual(decoded.sub2Entries[0].name, "主账户")
+        XCTAssertEqual(decoded.sub2Entries[0].dailyUsageText, "$0.25")
         XCTAssertEqual(decoded.tightestAccount?.displayName, "you@x.ai")
+    }
+
+    func testSnapshotRoundTripMissingDailyUsageDecodesNil() throws {
+        let original = WidgetSnapshot(
+            sub2Entries: [
+                WidgetSub2Entry(id: "s1", name: "主账户", balanceText: "$2.00")
+            ]
+        )
+
+        let decoded = try JSONDecoder().decode(
+            WidgetSnapshot.self,
+            from: try JSONEncoder().encode(original)
+        )
+        XCTAssertNil(decoded.sub2Entries[0].dailyUsageText)
     }
 
     func testLegacySingleSub2FieldsMigrateIntoEntries() throws {

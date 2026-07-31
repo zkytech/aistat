@@ -197,6 +197,7 @@ public struct WidgetSub2Entry: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     public var balanceText: String?
     public var planName: String?
+    public var dailyUsageText: String?
     public var error: String?
 
     public init(
@@ -204,12 +205,14 @@ public struct WidgetSub2Entry: Codable, Equatable, Identifiable, Sendable {
         name: String,
         balanceText: String? = nil,
         planName: String? = nil,
+        dailyUsageText: String? = nil,
         error: String? = nil
     ) {
         self.id = id
         self.name = name
         self.balanceText = balanceText
         self.planName = planName
+        self.dailyUsageText = dailyUsageText
         self.error = error
     }
 

@@ -7,7 +7,7 @@ import SwiftUI
 final class AccountDetailHoverPanelController {
     private var panel: NSPanel?
     private var materialView: NSVisualEffectView?
-    private var hostingView: NSHostingView<AccountDetailHoverPanelContent>?
+    private var hostingView: NSHostingView<AnyView>?
     private var currentItemID: String?
     private weak var trackedAnchorWindow: NSWindow?
     private var anchorObservations: [NSObjectProtocol] = []
@@ -33,6 +33,33 @@ final class AccountDetailHoverPanelController {
         relativeTo anchorWindow: NSWindow?,
         onDismiss: @escaping () -> Void
     ) {
+        show(
+            content: .account(item),
+            id: item.id,
+            relativeTo: anchorWindow,
+            onDismiss: onDismiss
+        )
+    }
+
+    func show(
+        balance: BalanceEntry,
+        relativeTo anchorWindow: NSWindow?,
+        onDismiss: @escaping () -> Void
+    ) {
+        show(
+            content: .balance(balance),
+            id: balance.id,
+            relativeTo: anchorWindow,
+            onDismiss: onDismiss
+        )
+    }
+
+    private func show(
+        content: PanelContent,
+        id: String,
+        relativeTo anchorWindow: NSWindow?,
+        onDismiss: @escaping () -> Void
+    ) {
         guard let anchorWindow else {
             hide()
             return
@@ -42,17 +69,16 @@ final class AccountDetailHoverPanelController {
         trackAnchorWindow(anchorWindow)
 
         let panel = ensurePanel()
-        let sameVisibleItem = isVisible && currentItemID == item.id
-        let content = AccountDetailHoverPanelContent(item: item)
+        let sameVisibleItem = isVisible && currentItemID == id
+        let contentView = content.view
 
         if let hostingView {
-            // Same account still visible: keep the existing view tree.
-            if !(sameVisibleItem && hostingView.rootView.item == item) {
-                hostingView.rootView = content
+            if !sameVisibleItem {
+                hostingView.rootView = contentView
             }
         } else {
             let material = makeMaterialView()
-            let host = NSHostingView(rootView: content)
+            let host = NSHostingView(rootView: contentView)
             host.wantsLayer = true
             host.layer?.backgroundColor = NSColor.clear.cgColor
             host.autoresizingMask = [.width, .height]
@@ -66,7 +92,7 @@ final class AccountDetailHoverPanelController {
         // Keep glass chrome in sync with the MenuBarExtra window whenever shown.
         syncMaterialChrome(with: anchorWindow)
 
-        currentItemID = item.id
+        currentItemID = id
         panel.layoutIfNeeded()
         let size = preferredSize(for: hostingView)
 
@@ -192,7 +218,7 @@ final class AccountDetailHoverPanelController {
         return nil
     }
 
-    private func preferredSize(for hostingView: NSHostingView<AccountDetailHoverPanelContent>?) -> NSSize {
+    private func preferredSize(for hostingView: NSHostingView<AnyView>?) -> NSSize {
         guard let hostingView else {
             return NSSize(width: 300, height: 320)
         }
@@ -377,11 +403,18 @@ final class AccountDetailHoverPanelController {
     }
 }
 
-private struct AccountDetailHoverPanelContent: View {
-    let item: AccountQuota
+/// Content hosted by the hover panel: a CLIProxy account or a balance source.
+private enum PanelContent {
+    case account(AccountQuota)
+    case balance(BalanceEntry)
 
-    var body: some View {
-        AccountQuotaDetailView(item: item)
+    var view: AnyView {
+        switch self {
+        case .account(let item):
+            return AnyView(AccountQuotaDetailView(item: item))
+        case .balance(let entry):
+            return AnyView(BalanceEntryDetailView(entry: entry))
+        }
     }
 }
 

@@ -83,9 +83,30 @@ struct Sub2APIUsage: Decodable, Sendable, Equatable {
     let remaining: Double?
     let quota: Sub2APIQuota?
     let subscription: Sub2APISubscription?
+    let usage: Sub2APIUsageStats?
+
+    init(
+        mode: String,
+        planName: String? = nil,
+        unit: String? = nil,
+        balance: Double? = nil,
+        remaining: Double? = nil,
+        quota: Sub2APIQuota? = nil,
+        subscription: Sub2APISubscription? = nil,
+        usage: Sub2APIUsageStats? = nil
+    ) {
+        self.mode = mode
+        self.planName = planName
+        self.unit = unit
+        self.balance = balance
+        self.remaining = remaining
+        self.quota = quota
+        self.subscription = subscription
+        self.usage = usage
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case mode, planName, unit, balance, remaining, quota, subscription
+        case mode, planName, unit, balance, remaining, quota, subscription, usage
     }
 
     var availableBalance: Double? {
@@ -105,6 +126,42 @@ struct Sub2APIUsage: Decodable, Sendable, Equatable {
             return max(dailyLimit - dailyUsage, 0)
         }
         return nil
+    }
+
+    /// Pre-formatted today's spend. Prefers the actual balance deduction
+    /// (`usage.today.actual_cost`), falls back to list price `cost`, then
+    /// subscription `daily_usage_usd`. Nil only when none are present.
+    var dailyUsageText: String? {
+        let value = usage?.today?.actualCost
+            ?? usage?.today?.cost
+            ?? subscription?.dailyUsageUSD
+        return value.map { BalanceFormatter.string($0, unit: unit) }
+    }
+}
+
+struct Sub2APIUsageStats: Decodable, Sendable, Equatable {
+    let today: Sub2APIUsageWindow?
+    let total: Sub2APIUsageWindow?
+}
+
+struct Sub2APIUsageWindow: Decodable, Sendable, Equatable {
+    let actualCost: Double?
+    let cost: Double?
+
+    init(actualCost: Double?, cost: Double?) {
+        self.actualCost = actualCost
+        self.cost = cost
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case actualCost = "actual_cost"
+        case cost
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        actualCost = try container.decodeIfPresent(FlexibleDouble.self, forKey: .actualCost)?.value
+        cost = try container.decodeIfPresent(FlexibleDouble.self, forKey: .cost)?.value
     }
 }
 
@@ -209,7 +266,25 @@ struct BalanceEntry: Identifiable, Sendable, Equatable {
     let name: String
     let balanceText: String?
     let planName: String?
+    /// Pre-formatted today's spend (Sub2API only; nil for DeepSeek).
+    let dailyUsageText: String?
     let error: String?
+
+    init(
+        id: String,
+        name: String,
+        balanceText: String? = nil,
+        planName: String? = nil,
+        dailyUsageText: String? = nil,
+        error: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.balanceText = balanceText
+        self.planName = planName
+        self.dailyUsageText = dailyUsageText
+        self.error = error
+    }
 }
 
 enum BalanceFormatter {

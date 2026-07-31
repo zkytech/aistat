@@ -35,6 +35,7 @@ final class QuotaStore: ObservableObject {
                 name: entry.connectionName,
                 balanceText: text,
                 planName: entry.usage?.planName,
+                dailyUsageText: entry.usage?.dailyUsageText,
                 error: entry.error
             )
         }

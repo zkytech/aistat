@@ -1,6 +1,6 @@
 import Foundation
 
-struct ProductUsage: Decodable, Sendable, Equatable, Identifiable {
+struct ProductUsage: Codable, Sendable, Equatable, Identifiable {
     let product: String
     let usagePercent: Double?
 
@@ -28,9 +28,15 @@ struct ProductUsage: Decodable, Sendable, Equatable, Identifiable {
             usagePercent = nil
         }
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(product, forKey: .product)
+        try container.encodeIfPresent(usagePercent, forKey: .usagePercent)
+    }
 }
 
-struct WeeklyQuota: Sendable, Equatable {
+struct WeeklyQuota: Codable, Sendable, Equatable {
     let usedPercent: Double?
     let periodStart: Date?
     let periodEnd: Date?
@@ -42,6 +48,11 @@ struct WeeklyQuota: Sendable, Equatable {
 
     var isExhausted: Bool {
         remainingPercent.map { $0 <= 0 } ?? false
+    }
+
+    /// Weekly usage just reset (0% used / full remaining). Deprioritized during near-refresh sort.
+    var isWeeklyUsageZeroed: Bool {
+        usedPercent.map { $0 <= 0 } ?? false
     }
 
     /// When weekly `creditUsagePercent` is absent, mirror CLIProxy management UI:
@@ -61,7 +72,7 @@ struct WeeklyQuota: Sendable, Equatable {
     }
 }
 
-struct MonthlyQuota: Sendable, Equatable {
+struct MonthlyQuota: Codable, Sendable, Equatable {
     let limitCents: Int
     let usedCents: Int
 
@@ -75,7 +86,7 @@ struct MonthlyQuota: Sendable, Equatable {
     }
 }
 
-struct Sub2APIUsage: Decodable, Sendable, Equatable {
+struct Sub2APIUsage: Codable, Sendable, Equatable {
     let mode: String
     let planName: String?
     let unit: String?
@@ -139,12 +150,12 @@ struct Sub2APIUsage: Decodable, Sendable, Equatable {
     }
 }
 
-struct Sub2APIUsageStats: Decodable, Sendable, Equatable {
+struct Sub2APIUsageStats: Codable, Sendable, Equatable {
     let today: Sub2APIUsageWindow?
     let total: Sub2APIUsageWindow?
 }
 
-struct Sub2APIUsageWindow: Decodable, Sendable, Equatable {
+struct Sub2APIUsageWindow: Codable, Sendable, Equatable {
     let actualCost: Double?
     let cost: Double?
 
@@ -163,15 +174,21 @@ struct Sub2APIUsageWindow: Decodable, Sendable, Equatable {
         actualCost = try container.decodeIfPresent(FlexibleDouble.self, forKey: .actualCost)?.value
         cost = try container.decodeIfPresent(FlexibleDouble.self, forKey: .cost)?.value
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(actualCost, forKey: .actualCost)
+        try container.encodeIfPresent(cost, forKey: .cost)
+    }
 }
 
-struct Sub2APIQuota: Decodable, Sendable, Equatable {
+struct Sub2APIQuota: Codable, Sendable, Equatable {
     let limit: Double?
     let used: Double?
     let remaining: Double?
 }
 
-struct Sub2APISubscription: Decodable, Sendable, Equatable {
+struct Sub2APISubscription: Codable, Sendable, Equatable {
     let dailyUsageUSD: Double?
     let dailyLimitUSD: Double?
     let weeklyUsageUSD: Double?
@@ -191,7 +208,7 @@ struct Sub2APISubscription: Decodable, Sendable, Equatable {
 
 // MARK: - DeepSeek 官方余额
 
-struct DeepSeekBalance: Decodable, Sendable, Equatable {
+struct DeepSeekBalance: Codable, Sendable, Equatable {
     let isAvailable: Bool
     /// 选出的币种（余额信息为空时为 nil）。
     let currency: String?
@@ -231,25 +248,45 @@ struct DeepSeekBalance: Decodable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case isAvailable = "is_available"
         case balanceInfos = "balance_infos"
+        // Compact cache fields (selected currency / balance after API reduction).
+        case currency
+        case totalBalance
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        isAvailable = try container.decodeIfPresent(Bool.self, forKey: .isAvailable) ?? true
-        let infos = try container.decodeIfPresent([Info].self, forKey: .balanceInfos) ?? []
 
-        // 币种选择顺序：USD 且 >0 → 任一 >0 → USD → 第一个。
-        let selected = infos.first(where: { $0.currency.uppercased() == "USD" && ($0.totalBalance ?? 0) > 0 })
-            ?? infos.first(where: { ($0.totalBalance ?? 0) > 0 })
-            ?? infos.first(where: { $0.currency.uppercased() == "USD" })
-            ?? infos.first
-        currency = selected?.currency
-        totalBalance = selected?.totalBalance
+        if container.contains(.balanceInfos) {
+            // Official API payload: reduce balance_infos to one selected currency.
+            isAvailable = try container.decodeIfPresent(Bool.self, forKey: .isAvailable) ?? true
+            let infos = try container.decodeIfPresent([Info].self, forKey: .balanceInfos) ?? []
+
+            // 币种选择顺序：USD 且 >0 → 任一 >0 → USD → 第一个。
+            let selected = infos.first(where: { $0.currency.uppercased() == "USD" && ($0.totalBalance ?? 0) > 0 })
+                ?? infos.first(where: { ($0.totalBalance ?? 0) > 0 })
+                ?? infos.first(where: { $0.currency.uppercased() == "USD" })
+                ?? infos.first
+            currency = selected?.currency
+            totalBalance = selected?.totalBalance
+        } else {
+            // Disk cache payload: already-selected currency / balance.
+            isAvailable = try container.decodeIfPresent(Bool.self, forKey: .isAvailable) ?? true
+            currency = try container.decodeIfPresent(String.self, forKey: .currency)
+            totalBalance = try container.decodeIfPresent(Double.self, forKey: .totalBalance)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        // Persist the already-selected currency/balance (not raw balance_infos).
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isAvailable, forKey: .isAvailable)
+        try container.encodeIfPresent(currency, forKey: .currency)
+        try container.encodeIfPresent(totalBalance, forKey: .totalBalance)
     }
 }
 
 /// One DeepSeek official API connection balance result.
-struct DeepSeekUsageEntry: Identifiable, Sendable, Equatable {
+struct DeepSeekUsageEntry: Codable, Identifiable, Sendable, Equatable {
     let connectionID: String
     let connectionName: String
     var usage: DeepSeekBalance?
@@ -316,7 +353,7 @@ enum BalanceFormatter {
     }
 }
 
-struct AccountQuota: Identifiable, Sendable, Equatable {
+struct AccountQuota: Codable, Identifiable, Sendable, Equatable {
     /// Owning CLIProxyAPI connection id (unique across multi-host configs).
     let connectionID: String
     /// User-facing CLIProxyAPI connection name for grouping / display.
@@ -357,7 +394,7 @@ struct AccountQuota: Identifiable, Sendable, Equatable {
 }
 
 /// One CLIProxyAPI host and its subscription rows (menu-bar section).
-struct CLIProxyAccountGroup: Identifiable, Sendable, Equatable {
+struct CLIProxyAccountGroup: Codable, Identifiable, Sendable, Equatable {
     let connectionID: String
     let connectionName: String
     var accounts: [AccountQuota]
@@ -367,7 +404,7 @@ struct CLIProxyAccountGroup: Identifiable, Sendable, Equatable {
 }
 
 /// One Sub2API host usage result.
-struct Sub2APIUsageEntry: Identifiable, Sendable, Equatable {
+struct Sub2APIUsageEntry: Codable, Identifiable, Sendable, Equatable {
     let connectionID: String
     let connectionName: String
     var usage: Sub2APIUsage?
@@ -393,9 +430,17 @@ enum DisplayDateFormatter {
 }
 
 enum AccountQuotaSorter {
-    /// Closer to refresh date first; missing dates last; stable by display name + authIndex.
+    /// Closer to refresh date first; weekly-zeroed accounts last; missing dates after non-zeroed;
+    /// stable by display name + authIndex.
     static func sortByRefreshProximity(_ items: [AccountQuota], now: Date = Date()) -> [AccountQuota] {
         items.sorted { lhs, rhs in
+            let leftZeroed = lhs.weekly?.isWeeklyUsageZeroed == true
+            let rightZeroed = rhs.weekly?.isWeeklyUsageZeroed == true
+            if leftZeroed != rightZeroed {
+                // Freshly reset (0% used) → lowest priority / end of list.
+                return !leftZeroed
+            }
+
             let leftDistance = lhs.distanceToRefresh(from: now)
             let rightDistance = rhs.distanceToRefresh(from: now)
 

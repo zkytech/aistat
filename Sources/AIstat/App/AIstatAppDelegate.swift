@@ -4,7 +4,7 @@ import AppKit
 /// so WidgetKit snapshots update without opening the menu bar panel.
 @MainActor
 final class AIstatAppDelegate: NSObject, NSApplicationDelegate {
-    let store = QuotaStore()
+    let store = QuotaStore(cacheStore: DefaultQuotaCacheStore())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store.start()

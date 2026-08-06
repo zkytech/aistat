@@ -1,6 +1,6 @@
 import Foundation
 
-struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
+struct AuthAccount: Codable, Identifiable, Sendable, Equatable {
     let provider: String
     let email: String?
     let account: String?
@@ -84,6 +84,23 @@ struct AuthAccount: Decodable, Identifiable, Sendable, Equatable {
         nextRetryAfter = try container.decodeIfPresent(String.self, forKey: .nextRetryAfter)
         success = try container.decodeIfPresent(Int.self, forKey: .success)
         failed = try container.decodeIfPresent(Int.self, forKey: .failed)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
+        try container.encodeIfPresent(email, forKey: .email)
+        try container.encodeIfPresent(account, forKey: .account)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encode(authIndex, forKey: .authIndex)
+        try container.encodeIfPresent(status, forKey: .status)
+        try container.encode(unavailable, forKey: .unavailable)
+        try container.encodeIfPresent(statusMessage, forKey: .statusMessage)
+        try container.encode(disabled, forKey: .disabled)
+        try container.encodeIfPresent(nextRetryAfter, forKey: .nextRetryAfter)
+        try container.encodeIfPresent(success, forKey: .success)
+        try container.encodeIfPresent(failed, forKey: .failed)
     }
 }
 

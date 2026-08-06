@@ -343,6 +343,53 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(priorities.map(\.priority), [4, 3, 2, 1])
     }
 
+    func testAccountQuotaSorterPutsWeeklyZeroedAccountsLast() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let items = [
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "zero-near@x.ai", name: "zero-near.json", authIndex: "zero-near"),
+                // Closest reset, but weekly usage already at 0% → must sort last.
+                weekly: WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: now.addingTimeInterval(50), productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "far@x.ai", name: "far.json", authIndex: "far"),
+                weekly: WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: now.addingTimeInterval(10_000), productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "near@x.ai", name: "near.json", authIndex: "near"),
+                weekly: WeeklyQuota(usedPercent: 20, periodStart: nil, periodEnd: now.addingTimeInterval(100), productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "missing@x.ai", name: "missing.json", authIndex: "missing"),
+                weekly: WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: nil, productUsage: [])
+            ),
+            AccountQuota(
+                account: AuthAccount(provider: "xai", email: "zero-far@x.ai", name: "zero-far.json", authIndex: "zero-far"),
+                weekly: WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: now.addingTimeInterval(20_000), productUsage: [])
+            )
+        ]
+
+        let sorted = AccountQuotaSorter.sortByRefreshProximity(items, now: now)
+        XCTAssertEqual(
+            sorted.map(\.account.authIndex),
+            ["near", "far", "missing", "zero-near", "zero-far"]
+        )
+
+        let priorities = AccountQuotaSorter.prioritiesByProximity(items, now: now)
+        XCTAssertEqual(
+            priorities.map(\.name),
+            ["near.json", "far.json", "missing.json", "zero-near.json", "zero-far.json"]
+        )
+        XCTAssertEqual(priorities.map(\.priority), [5, 4, 3, 2, 1])
+    }
+
+    func testWeeklyUsageZeroedDetection() {
+        XCTAssertTrue(WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: nil, productUsage: []).isWeeklyUsageZeroed)
+        XCTAssertFalse(WeeklyQuota(usedPercent: 0.1, periodStart: nil, periodEnd: nil, productUsage: []).isWeeklyUsageZeroed)
+        XCTAssertFalse(WeeklyQuota(usedPercent: 100, periodStart: nil, periodEnd: nil, productUsage: []).isWeeklyUsageZeroed)
+        XCTAssertFalse(WeeklyQuota(usedPercent: nil, periodStart: nil, periodEnd: nil, productUsage: []).isWeeklyUsageZeroed)
+    }
+
     func testRemainingPercentBoundaries() {
         XCTAssertEqual(WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent, 100)
         XCTAssertEqual(WeeklyQuota(usedPercent: 100, periodStart: nil, periodEnd: nil, productUsage: []).remainingPercent, 0)

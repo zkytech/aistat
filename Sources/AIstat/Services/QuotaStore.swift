@@ -58,10 +58,12 @@ final class QuotaStore: ObservableObject {
     private var clientFactory: (CLIProxyConnection) -> any CLIProxyClientProtocol
     private var sub2APIClientFactory: (Sub2APIConnection) -> any Sub2APIClientProtocol
     private var deepSeekClientFactory: (DeepSeekConnection) -> any DeepSeekClientProtocol
+    private var cacheStore: QuotaCacheStoreProtocol
     private var refreshTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var lastRefreshAttemptAt: Date?
     private var hasStarted = false
+    private var didHydrateFromCache = false
     private let includeMonthly: Bool
     private let nowProvider: () -> Date
 
@@ -76,6 +78,7 @@ final class QuotaStore: ObservableObject {
         clientFactory: @escaping (CLIProxyConnection) -> any CLIProxyClientProtocol = { CLIProxyClient(connection: $0) },
         sub2APIClientFactory: @escaping (Sub2APIConnection) -> any Sub2APIClientProtocol = { Sub2APIClient(connection: $0) },
         deepSeekClientFactory: @escaping (DeepSeekConnection) -> any DeepSeekClientProtocol = { DeepSeekClient(connection: $0) },
+        cacheStore: any QuotaCacheStoreProtocol = NullQuotaCacheStore(),
         nowProvider: @escaping () -> Date = { Date() }
     ) {
         self.configuration = configuration
@@ -83,6 +86,7 @@ final class QuotaStore: ObservableObject {
         self.clientFactory = clientFactory
         self.sub2APIClientFactory = sub2APIClientFactory
         self.deepSeekClientFactory = deepSeekClientFactory
+        self.cacheStore = cacheStore
         self.nowProvider = nowProvider
         updateMenuTitle()
     }
@@ -90,6 +94,7 @@ final class QuotaStore: ObservableObject {
     func start() {
         if !hasStarted {
             hasStarted = true
+            hydrateFromCacheIfNeeded()
             restartAutoRefresh()
         }
         Task { await refresh(force: false) }
@@ -149,11 +154,15 @@ final class QuotaStore: ObservableObject {
         let deepSeekConnections = configuration.deepSeekConnections.filter(\.isConfigured)
 
         guard !cliConnections.isEmpty || !sub2Connections.isEmpty || !deepSeekConnections.isEmpty else {
+            // No data sources configured — clear live state and drop any stale cache.
             globalError = CLIProxyClientError.notConfigured.localizedDescription
             accountGroups = []
             sub2APIEntries = []
             deepSeekEntries = []
+            lastRefreshAt = nil
             updateMenuTitle()
+            // Empty config is intentional: overwrite cache so cold start does not resurrect old rows.
+            persistCache(force: true)
             publishWidgetSnapshot(updatedAt: nowProvider())
             return
         }
@@ -163,22 +172,28 @@ final class QuotaStore: ObservableObject {
 
         let shouldFetchMonthly = includeMonthly
         let now = nowProvider()
-        var groupErrors: [String] = []
 
-        // Snapshot previous groups so a list-fetch failure keeps last good rows for that host.
-        let previousByID = Dictionary(uniqueKeysWithValues: accountGroups.map { ($0.connectionID, $0) })
+        // Snapshot previous rows so any failure keeps last good values instead of blanking UI.
+        let previousGroupsByID = Dictionary(uniqueKeysWithValues: accountGroups.map { ($0.connectionID, $0) })
+        let previousSub2ByID = Dictionary(uniqueKeysWithValues: sub2APIEntries.map { ($0.connectionID, $0) })
+        let previousDeepSeekByID = Dictionary(uniqueKeysWithValues: deepSeekEntries.map { ($0.connectionID, $0) })
 
-        async let sub2Results: [Sub2APIUsageEntry] = fetchAllSub2API(connections: sub2Connections)
-        async let deepSeekResults: [DeepSeekUsageEntry] = fetchAllDeepSeek(connections: deepSeekConnections)
+        async let sub2Fetch: (entries: [Sub2APIUsageEntry], anySuccess: Bool) = fetchAllSub2API(
+            connections: sub2Connections,
+            previousByID: previousSub2ByID
+        )
+        async let deepSeekFetch: (entries: [DeepSeekUsageEntry], anySuccess: Bool) = fetchAllDeepSeek(
+            connections: deepSeekConnections,
+            previousByID: previousDeepSeekByID
+        )
 
-        if cliConnections.isEmpty {
-            accountGroups = []
-        } else {
-            var nextGroups: [CLIProxyAccountGroup] = []
+        var nextGroups: [CLIProxyAccountGroup] = []
+        var anyCLIProxySuccess = false
 
-            await withTaskGroup(of: CLIProxyAccountGroup.self) { group in
+        if !cliConnections.isEmpty {
+            await withTaskGroup(of: (CLIProxyAccountGroup, Bool).self) { group in
                 for connection in cliConnections {
-                    let previous = previousByID[connection.id]
+                    let previous = previousGroupsByID[connection.id]
                     group.addTask { [clientFactory, shouldFetchMonthly, now] in
                         await Self.refreshCLIProxyGroup(
                             connection: connection,
@@ -189,77 +204,158 @@ final class QuotaStore: ObservableObject {
                         )
                     }
                 }
-                for await result in group {
+                for await (result, succeeded) in group {
                     nextGroups.append(result)
+                    if succeeded { anyCLIProxySuccess = true }
                 }
             }
 
             // Preserve configuration order (task group completes out of order).
             let order = Dictionary(uniqueKeysWithValues: cliConnections.enumerated().map { ($0.element.id, $0.offset) })
             nextGroups.sort { (order[$0.connectionID] ?? 0) < (order[$1.connectionID] ?? 0) }
-            accountGroups = nextGroups
-            groupErrors = nextGroups.compactMap { group in
-                guard let error = group.error, !error.isEmpty else { return nil }
-                return "\(group.connectionName)：\(error)"
-            }
         }
 
-        sub2APIEntries = await sub2Results
-        deepSeekEntries = await deepSeekResults
+        let sub2 = await sub2Fetch
+        let deepSeek = await deepSeekFetch
+
+        // Fresh success only: fallback-to-previous does not count.
+        let anyFreshSuccess = anyCLIProxySuccess || sub2.anySuccess || deepSeek.anySuccess
+
+        // Complete failure: ignore this request — leave live UI and disk cache untouched.
+        if !anyFreshSuccess {
+            updateMenuTitle()
+            return
+        }
+
+        accountGroups = nextGroups
+        sub2APIEntries = sub2.entries
+        deepSeekEntries = deepSeek.entries
         lastRefreshAt = now
-
-        if accountGroups.isEmpty && sub2APIEntries.allSatisfy({ $0.usage == nil })
-            && deepSeekEntries.allSatisfy({ $0.usage == nil }) {
-            if let firstError = groupErrors.first
-                ?? sub2APIEntries.compactMap(\.error).first
-                ?? deepSeekEntries.compactMap(\.error).first {
-                globalError = firstError
-            } else {
-                globalError = nil
-            }
-        } else if !groupErrors.isEmpty {
-            // Partial success: surface priority / list errors without wiping data.
-            globalError = groupErrors.joined(separator: "；")
-        } else {
-            globalError = nil
-        }
+        // Prefer showing last-good data over failure banners.
+        globalError = nil
 
         updateMenuTitle()
+        persistCache()
         publishWidgetSnapshot(updatedAt: lastRefreshAt ?? nowProvider())
     }
 
+    /// Loads last known API data so the menu bar / panel show content immediately.
+    private func hydrateFromCacheIfNeeded() {
+        guard !didHydrateFromCache else { return }
+        didHydrateFromCache = true
+
+        guard let snapshot = cacheStore.load(), snapshot.hasData else { return }
+
+        accountGroups = snapshot.accountGroups
+        sub2APIEntries = snapshot.sub2APIEntries
+        deepSeekEntries = snapshot.deepSeekEntries
+        lastRefreshAt = snapshot.lastRefreshAt
+        // Never restore a cached error banner — only display-ready rows.
+        globalError = nil
+        updateMenuTitle()
+
+        // Push cached data into the widget before the first network refresh finishes.
+        publishWidgetSnapshot(updatedAt: snapshot.lastRefreshAt ?? nowProvider())
+    }
+
+    /// Writes a privacy-safe display snapshot. Failed refreshes must not call this
+    /// (except `force` when the user clears all data sources).
+    private func persistCache(force: Bool = false) {
+        let snapshot = QuotaCacheSnapshot(
+            accountGroups: Self.cacheSanitizedGroups(accountGroups),
+            sub2APIEntries: Self.cacheSanitizedSub2(sub2APIEntries),
+            deepSeekEntries: Self.cacheSanitizedDeepSeek(deepSeekEntries),
+            lastRefreshAt: lastRefreshAt,
+            globalError: nil
+        )
+        guard force || snapshot.hasData else { return }
+        try? cacheStore.save(snapshot)
+    }
+
+    /// Strip per-row error markers so a later hydrate never resurrects failure UI.
+    private static func cacheSanitizedGroups(_ groups: [CLIProxyAccountGroup]) -> [CLIProxyAccountGroup] {
+        groups.map { group in
+            CLIProxyAccountGroup(
+                connectionID: group.connectionID,
+                connectionName: group.connectionName,
+                accounts: group.accounts.map { item in
+                    var copy = item
+                    // Keep last known weekly/monthly; drop transient error text.
+                    if copy.weekly != nil || copy.monthly != nil {
+                        copy.errorMessage = nil
+                    }
+                    return copy
+                },
+                error: nil
+            )
+        }
+    }
+
+    private static func cacheSanitizedSub2(_ entries: [Sub2APIUsageEntry]) -> [Sub2APIUsageEntry] {
+        entries.compactMap { entry in
+            guard entry.usage != nil else { return nil }
+            return Sub2APIUsageEntry(
+                connectionID: entry.connectionID,
+                connectionName: entry.connectionName,
+                usage: entry.usage,
+                error: nil
+            )
+        }
+    }
+
+    private static func cacheSanitizedDeepSeek(_ entries: [DeepSeekUsageEntry]) -> [DeepSeekUsageEntry] {
+        entries.compactMap { entry in
+            guard entry.usage != nil else { return nil }
+            return DeepSeekUsageEntry(
+                connectionID: entry.connectionID,
+                connectionName: entry.connectionName,
+                usage: entry.usage,
+                error: nil
+            )
+        }
+    }
+
+    /// Returns the group plus whether this host produced a fresh successful list fetch.
     private static func refreshCLIProxyGroup(
         connection: CLIProxyConnection,
         previous: CLIProxyAccountGroup?,
         client: any CLIProxyClientProtocol,
         includeMonthly: Bool,
         now: Date
-    ) async -> CLIProxyAccountGroup {
+    ) async -> (CLIProxyAccountGroup, Bool) {
         let connectionName = connection.displayName
+        let previousByAuth = Dictionary(
+            uniqueKeysWithValues: (previous?.accounts ?? []).map { ($0.account.authIndex, $0) }
+        )
 
         do {
             let authAccounts = try await client.fetchAccounts()
             if authAccounts.isEmpty {
-                return CLIProxyAccountGroup(
-                    connectionID: connection.id,
-                    connectionName: connectionName,
-                    accounts: [],
-                    error: nil
+                return (
+                    CLIProxyAccountGroup(
+                        connectionID: connection.id,
+                        connectionName: connectionName,
+                        accounts: [],
+                        error: nil
+                    ),
+                    true
                 )
             }
 
-            var next: [AccountQuota] = authAccounts.map {
-                AccountQuota(
+            var next: [AccountQuota] = authAccounts.map { account in
+                let prior = previousByAuth[account.authIndex]
+                return AccountQuota(
                     connectionID: connection.id,
                     connectionName: connectionName,
-                    account: $0,
-                    weekly: nil,
-                    monthly: nil,
+                    account: account,
+                    // Seed with last-known quotas so a per-account failure keeps numbers on screen.
+                    weekly: prior?.weekly,
+                    monthly: prior?.monthly,
                     errorMessage: nil
                 )
             }
 
-            await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, String?).self) { group in
+            await withTaskGroup(of: (Int, WeeklyQuota?, MonthlyQuota?, Bool).self) { group in
                 for (index, item) in next.enumerated() {
                     let account = item.account
                     group.addTask {
@@ -269,72 +365,91 @@ final class QuotaStore: ObservableObject {
                             if includeMonthly {
                                 monthly = try? await client.fetchMonthlyQuota(for: account)
                             }
-                            return (index, weekly.fillingMissingUsage(from: monthly), monthly, nil)
+                            return (index, weekly.fillingMissingUsage(from: monthly), monthly, true)
                         } catch {
-                            return (index, nil, nil, error.localizedDescription)
+                            // Signal failure; caller keeps seeded previous weekly/monthly.
+                            return (index, nil, nil, false)
                         }
                     }
                 }
 
-                for await (index, weekly, monthly, errorMessage) in group {
-                    next[index].weekly = weekly
-                    next[index].monthly = monthly
-                    next[index].errorMessage = errorMessage
+                for await (index, weekly, monthly, succeeded) in group {
+                    if succeeded {
+                        next[index].weekly = weekly
+                        // Monthly may be nil when includeMonthly is false or monthly call failed softly.
+                        if includeMonthly {
+                            next[index].monthly = monthly ?? next[index].monthly
+                        }
+                        next[index].errorMessage = nil
+                    }
+                    // On failure: leave seeded previous values, no errorMessage (avoid failure UI).
                 }
             }
 
             if connection.preferNearRefreshAccounts {
                 let sorted = AccountQuotaSorter.sortByRefreshProximity(next, now: now)
                 let priorities = AccountQuotaSorter.prioritiesByProximity(sorted, now: now)
-                do {
-                    try await client.updateAuthPriorities(priorities)
-                    return CLIProxyAccountGroup(
+                // Priority write-back is best-effort; never blank quota rows on sync failure.
+                try? await client.updateAuthPriorities(priorities)
+                return (
+                    CLIProxyAccountGroup(
                         connectionID: connection.id,
                         connectionName: connectionName,
                         accounts: sorted,
                         error: nil
-                    )
-                } catch {
-                    return CLIProxyAccountGroup(
-                        connectionID: connection.id,
-                        connectionName: connectionName,
-                        accounts: sorted,
-                        error: "额度已刷新，但优先级同步失败：\(error.localizedDescription)"
-                    )
-                }
+                    ),
+                    true
+                )
             }
 
-            return CLIProxyAccountGroup(
-                connectionID: connection.id,
-                connectionName: connectionName,
-                accounts: next,
-                error: nil
+            return (
+                CLIProxyAccountGroup(
+                    connectionID: connection.id,
+                    connectionName: connectionName,
+                    accounts: next,
+                    error: nil
+                ),
+                true
             )
         } catch {
             // Keep previous successful rows for this host if list fetch fails later.
             if let previous, !previous.accounts.isEmpty {
-                return CLIProxyAccountGroup(
-                    connectionID: connection.id,
-                    connectionName: connectionName,
-                    accounts: previous.accounts,
-                    error: error.localizedDescription
+                return (
+                    CLIProxyAccountGroup(
+                        connectionID: connection.id,
+                        connectionName: connectionName,
+                        accounts: previous.accounts.map { item in
+                            var copy = item
+                            copy.errorMessage = nil
+                            return copy
+                        },
+                        error: nil
+                    ),
+                    false
                 )
             }
-            return CLIProxyAccountGroup(
-                connectionID: connection.id,
-                connectionName: connectionName,
-                accounts: [],
-                error: error.localizedDescription
+            return (
+                CLIProxyAccountGroup(
+                    connectionID: connection.id,
+                    connectionName: connectionName,
+                    accounts: [],
+                    error: nil
+                ),
+                false
             )
         }
     }
 
-    private func fetchAllSub2API(connections: [Sub2APIConnection]) async -> [Sub2APIUsageEntry] {
-        guard !connections.isEmpty else { return [] }
+    private func fetchAllSub2API(
+        connections: [Sub2APIConnection],
+        previousByID: [String: Sub2APIUsageEntry]
+    ) async -> (entries: [Sub2APIUsageEntry], anySuccess: Bool) {
+        guard !connections.isEmpty else { return ([], false) }
 
-        return await withTaskGroup(of: (Int, Sub2APIUsageEntry).self) { group in
+        return await withTaskGroup(of: (Int, Sub2APIUsageEntry, Bool).self) { group in
             for (index, connection) in connections.enumerated() {
                 let client = sub2APIClientFactory(connection)
+                let previous = previousByID[connection.id]
                 group.addTask {
                     do {
                         let usage = try await client.fetchUsage()
@@ -345,67 +460,104 @@ final class QuotaStore: ObservableObject {
                                 connectionName: connection.displayName,
                                 usage: usage,
                                 error: nil
-                            )
+                            ),
+                            true
                         )
                     } catch {
+                        // Ignore failed request: keep last good balance when available.
+                        if let previous, previous.usage != nil {
+                            return (
+                                index,
+                                Sub2APIUsageEntry(
+                                    connectionID: connection.id,
+                                    connectionName: connection.displayName,
+                                    usage: previous.usage,
+                                    error: nil
+                                ),
+                                false
+                            )
+                        }
                         return (
                             index,
                             Sub2APIUsageEntry(
                                 connectionID: connection.id,
                                 connectionName: connection.displayName,
                                 usage: nil,
-                                error: error.localizedDescription
-                            )
+                                error: nil
+                            ),
+                            false
                         )
                     }
                 }
             }
 
-            var results: [(Int, Sub2APIUsageEntry)] = []
+            var results: [(Int, Sub2APIUsageEntry, Bool)] = []
             for await item in group {
                 results.append(item)
             }
-            return results.sorted { $0.0 < $1.0 }.map(\.1)
+            let ordered = results.sorted { $0.0 < $1.0 }
+            return (ordered.map(\.1), ordered.contains(where: \.2))
         }
     }
 
-    private func fetchAllDeepSeek(connections: [DeepSeekConnection]) async -> [DeepSeekUsageEntry] {
-        guard !connections.isEmpty else { return [] }
+    private func fetchAllDeepSeek(
+        connections: [DeepSeekConnection],
+        previousByID: [String: DeepSeekUsageEntry]
+    ) async -> (entries: [DeepSeekUsageEntry], anySuccess: Bool) {
+        guard !connections.isEmpty else { return ([], false) }
 
-        return await withTaskGroup(of: (Int, DeepSeekUsageEntry).self) { group in
+        return await withTaskGroup(of: (Int, DeepSeekUsageEntry, Bool).self) { group in
             for (index, connection) in connections.enumerated() {
                 let client = deepSeekClientFactory(connection)
+                let previous = previousByID[connection.id]
                 group.addTask {
                     do {
                         let balance = try await client.fetchBalance()
+                        // Soft empty when unavailable; still a successful API response.
                         return (
                             index,
                             DeepSeekUsageEntry(
                                 connectionID: connection.id,
                                 connectionName: connection.displayName,
                                 usage: balance,
-                                error: balance.unavailableMessage
-                            )
+                                error: nil
+                            ),
+                            true
                         )
                     } catch {
+                        // Ignore failed request: keep last good balance when available.
+                        if let previous, previous.usage != nil {
+                            return (
+                                index,
+                                DeepSeekUsageEntry(
+                                    connectionID: connection.id,
+                                    connectionName: connection.displayName,
+                                    usage: previous.usage,
+                                    error: nil
+                                ),
+                                false
+                            )
+                        }
                         return (
                             index,
                             DeepSeekUsageEntry(
                                 connectionID: connection.id,
                                 connectionName: connection.displayName,
                                 usage: nil,
-                                error: error.localizedDescription
-                            )
+                                error: nil
+                            ),
+                            false
                         )
                     }
                 }
             }
 
-            var results: [(Int, DeepSeekUsageEntry)] = []
+            var results: [(Int, DeepSeekUsageEntry, Bool)] = []
             for await item in group {
                 results.append(item)
             }
-            return results.sorted { $0.0 < $1.0 }.map(\.1)
+            let ordered = results.sorted { $0.0 < $1.0 }
+            return (ordered.map(\.1), ordered.contains(where: \.2))
         }
     }
 

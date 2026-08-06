@@ -62,7 +62,9 @@ final class QuotaStoreTests: XCTestCase {
 
         XCTAssertEqual(store.accounts.count, 1)
         XCTAssertEqual(store.accounts[0].weekly?.usedPercent, 10)
-        XCTAssertNotNil(store.globalError)
+        // Failed refresh is ignored: keep last-good data and avoid failure UI.
+        XCTAssertNil(store.globalError)
+        XCTAssertNil(store.accountGroups.first?.error)
     }
 
     func testMenuOpenRefreshIsGatedButManualForceIsNot() async {
@@ -146,12 +148,14 @@ final class QuotaStoreTests: XCTestCase {
         let near = now.addingTimeInterval(3600)
         let far = now.addingTimeInterval(86_400)
         let expiredClose = now.addingTimeInterval(-600)
+        let zeroNear = now.addingTimeInterval(300)
 
         let accounts = [
             AuthAccount(provider: "xai", email: "far@x.ai", name: "far.json", authIndex: "far"),
             AuthAccount(provider: "xai", email: "near@x.ai", name: "near.json", authIndex: "near"),
             AuthAccount(provider: "xai", email: "missing@x.ai", name: "missing.json", authIndex: "missing"),
-            AuthAccount(provider: "xai", email: "expired@x.ai", name: "expired.json", authIndex: "expired")
+            AuthAccount(provider: "xai", email: "expired@x.ai", name: "expired.json", authIndex: "expired"),
+            AuthAccount(provider: "xai", email: "zero@x.ai", name: "zero.json", authIndex: "zero")
         ]
         let client = FakeClient(
             accounts: accounts,
@@ -159,7 +163,9 @@ final class QuotaStoreTests: XCTestCase {
                 "far": .success(WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: far, productUsage: [])),
                 "near": .success(WeeklyQuota(usedPercent: 20, periodStart: nil, periodEnd: near, productUsage: [])),
                 "missing": .success(WeeklyQuota(usedPercent: 30, periodStart: nil, periodEnd: nil, productUsage: [])),
-                "expired": .success(WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: expiredClose, productUsage: []))
+                "expired": .success(WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: expiredClose, productUsage: [])),
+                // Closest periodEnd but weekly usage zeroed → lowest priority.
+                "zero": .success(WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: zeroNear, productUsage: []))
             ]
         )
 
@@ -177,9 +183,12 @@ final class QuotaStoreTests: XCTestCase {
 
         await store.refresh(force: true)
 
-        XCTAssertEqual(store.accounts.map(\.account.authIndex), ["expired", "near", "far", "missing"])
-        XCTAssertEqual(client.priorityUpdates.last?.map(\.name), ["expired.json", "near.json", "far.json", "missing.json"])
-        XCTAssertEqual(client.priorityUpdates.last?.map(\.priority), [4, 3, 2, 1])
+        XCTAssertEqual(store.accounts.map(\.account.authIndex), ["expired", "near", "far", "missing", "zero"])
+        XCTAssertEqual(
+            client.priorityUpdates.last?.map(\.name),
+            ["expired.json", "near.json", "far.json", "missing.json", "zero.json"]
+        )
+        XCTAssertEqual(client.priorityUpdates.last?.map(\.priority), [5, 4, 3, 2, 1])
     }
 
     func testPreferNearRefreshDisabledKeepsOrderAndSkipsPrioritySync() async {
@@ -248,7 +257,9 @@ final class QuotaStoreTests: XCTestCase {
         await store.refresh(force: true)
 
         XCTAssertEqual(store.accounts.map(\.account.authIndex), ["a", "b"])
-        XCTAssertEqual(store.globalError?.contains("优先级同步失败"), true)
+        // Priority write-back is best-effort; do not surface failure on the menu.
+        XCTAssertNil(store.globalError)
+        XCTAssertNil(store.accountGroups.first?.error)
     }
 
     func testSub2APIBalanceSuccessAndFailureIsolation() async {
@@ -297,7 +308,10 @@ final class QuotaStoreTests: XCTestCase {
 
         XCTAssertEqual(store.accounts.count, 1)
         XCTAssertEqual(store.accounts[0].weekly?.usedPercent, 10)
-        XCTAssertEqual(store.sub2APIEntries[0].error?.contains("balance down"), true)
+        // Keep last good balance; do not show failure on the row.
+        XCTAssertEqual(store.sub2APIEntries[0].usage?.availableBalance, 12.16)
+        XCTAssertNil(store.sub2APIEntries[0].error)
+        XCTAssertNil(store.globalError)
     }
 
     func testSub2APIDailyUsageFlowsIntoBalanceEntries() async {
@@ -772,8 +786,331 @@ final class QuotaStoreTests: XCTestCase {
 
         XCTAssertEqual(store.accounts.count, 1)
         XCTAssertEqual(store.accounts[0].weekly?.usedPercent, 10)
-        XCTAssertEqual(store.deepSeekEntries[0].error?.contains("balance down"), true)
+        // Failed DeepSeek request is ignored (no previous balance to keep).
+        XCTAssertNil(store.deepSeekEntries[0].usage)
+        XCTAssertNil(store.deepSeekEntries[0].error)
         XCTAssertNil(store.globalError, "partial balance failure must not surface as global error")
+    }
+
+    func testRefreshPersistsCacheAndStartHydratesUI() async {
+        let cache = InMemoryQuotaCacheStore()
+        let accounts = [AuthAccount(provider: "xai", email: "ok@x.ai", name: "ok.json", authIndex: "a")]
+        let client = FakeClient(
+            accounts: accounts,
+            weekly: [
+                "a": .success(WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: nil, productUsage: []))
+            ]
+        )
+        let sub2 = FakeSub2APIClient(
+            result: .success(
+                Sub2APIUsage(
+                    mode: "unrestricted",
+                    planName: "Pro",
+                    unit: "USD",
+                    balance: 9.5,
+                    remaining: 9.5,
+                    quota: nil,
+                    subscription: nil
+                )
+            )
+        )
+        let ds = FakeDeepSeekClient(
+            result: .success(DeepSeekBalance(isAvailable: true, currency: "USD", totalBalance: 3))
+        )
+
+        let writer = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                sub2APIBaseURL: "https://sub2.example",
+                sub2APIKey: "sk",
+                deepSeekAPIKey: "ds",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            sub2APIClientFactory: { _ in sub2 },
+            deepSeekClientFactory: { _ in ds },
+            cacheStore: cache
+        )
+
+        await writer.refresh(force: true)
+
+        XCTAssertEqual(cache.saveCount, 1)
+        XCTAssertEqual(cache.snapshot?.accountGroups.first?.accounts.first?.weekly?.usedPercent, 40)
+        XCTAssertEqual(cache.snapshot?.sub2APIEntries.first?.usage?.availableBalance, 9.5)
+        XCTAssertEqual(cache.snapshot?.deepSeekEntries.first?.usage?.totalBalance, 3)
+        XCTAssertNotNil(cache.snapshot?.lastRefreshAt)
+
+        // Cold start: hydrate from disk before any network call.
+        let silentClient = FakeClient(accounts: [], weekly: [:])
+        silentClient.accountsError = CLIProxyClientError.httpStatus(503, "offline")
+        let reader = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                sub2APIBaseURL: "https://sub2.example",
+                sub2APIKey: "sk",
+                deepSeekAPIKey: "ds",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in silentClient },
+            sub2APIClientFactory: { _ in FakeSub2APIClient(result: .failure(Sub2APIClientError.httpStatus(500, "down"))) },
+            deepSeekClientFactory: { _ in FakeDeepSeekClient(result: .failure(DeepSeekAPIClientError.httpStatus(500, "down"))) },
+            cacheStore: cache
+        )
+
+        reader.start()
+        // Hydration is synchronous in start(); UI should already show cached values.
+        XCTAssertEqual(reader.accounts.first?.weekly?.usedPercent, 40)
+        XCTAssertEqual(reader.menuTitle, "额度 60%")
+        XCTAssertEqual(reader.sub2APIEntries.first?.usage?.availableBalance, 9.5)
+        XCTAssertEqual(reader.deepSeekEntries.first?.usage?.totalBalance, 3)
+        XCTAssertEqual(reader.balanceEntries.map(\.balanceText), ["$9.50", "$3.00"])
+    }
+
+    func testRefreshOverwritesCacheWithLatestAPIData() async {
+        let cache = InMemoryQuotaCacheStore()
+        cache.snapshot = QuotaCacheSnapshot(
+            accountGroups: [
+                CLIProxyAccountGroup(
+                    connectionID: "c",
+                    connectionName: "默认",
+                    accounts: [
+                        AccountQuota(
+                            connectionID: "c",
+                            connectionName: "默认",
+                            account: AuthAccount(provider: "xai", email: "old@x.ai", name: "old.json", authIndex: "a"),
+                            weekly: WeeklyQuota(usedPercent: 10, periodStart: nil, periodEnd: nil, productUsage: [])
+                        )
+                    ],
+                    error: nil
+                )
+            ],
+            sub2APIEntries: [],
+            deepSeekEntries: [],
+            lastRefreshAt: Date(timeIntervalSince1970: 1),
+            globalError: nil
+        )
+
+        let client = FakeClient(
+            accounts: [AuthAccount(provider: "xai", email: "new@x.ai", name: "new.json", authIndex: "a")],
+            weekly: [
+                "a": .success(WeeklyQuota(usedPercent: 70, periodStart: nil, periodEnd: nil, productUsage: []))
+            ]
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(baseURL: "https://example.test", managementKey: "k", refreshIntervalSeconds: 300),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            cacheStore: cache
+        )
+
+        store.start()
+        XCTAssertEqual(store.accounts.first?.weekly?.usedPercent, 10)
+        XCTAssertEqual(store.menuTitle, "额度 90%")
+
+        await waitUntil(timeoutSeconds: 1) { client.fetchAccountsCount >= 1 }
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.accounts.first?.weekly?.usedPercent, 70)
+        XCTAssertEqual(store.menuTitle, "额度 30%")
+        XCTAssertEqual(cache.snapshot?.accountGroups.first?.accounts.first?.weekly?.usedPercent, 70)
+        XCTAssertEqual(cache.snapshot?.accountGroups.first?.accounts.first?.account.email, "new@x.ai")
+    }
+
+    func testFailedRefreshDoesNotOverwriteCacheOrUI() async {
+        let cache = InMemoryQuotaCacheStore()
+        let accounts = [AuthAccount(provider: "xai", email: "ok@x.ai", name: "ok.json", authIndex: "a")]
+        let client = FakeClient(
+            accounts: accounts,
+            weekly: [
+                "a": .success(WeeklyQuota(usedPercent: 25, periodStart: nil, periodEnd: nil, productUsage: []))
+            ]
+        )
+        let sub2 = FakeSub2APIClient(
+            result: .success(
+                Sub2APIUsage(
+                    mode: "unrestricted",
+                    planName: "Pro",
+                    unit: "USD",
+                    balance: 8,
+                    remaining: 8,
+                    quota: nil,
+                    subscription: nil
+                )
+            )
+        )
+        let ds = FakeDeepSeekClient(
+            result: .success(DeepSeekBalance(isAvailable: true, currency: "USD", totalBalance: 2))
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(
+                baseURL: "https://example.test",
+                managementKey: "k",
+                sub2APIBaseURL: "https://sub2.example",
+                sub2APIKey: "sk",
+                deepSeekAPIKey: "ds",
+                refreshIntervalSeconds: 300
+            ),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            sub2APIClientFactory: { _ in sub2 },
+            deepSeekClientFactory: { _ in ds },
+            cacheStore: cache
+        )
+
+        await store.refresh(force: true)
+        XCTAssertEqual(cache.saveCount, 1)
+        let cachedUsed = cache.snapshot?.accountGroups.first?.accounts.first?.weekly?.usedPercent
+        XCTAssertEqual(cachedUsed, 25)
+        XCTAssertEqual(store.menuTitle, "额度 75%")
+
+        // Everything fails on the next refresh.
+        client.accountsError = CLIProxyClientError.httpStatus(503, "down")
+        sub2.result = .failure(Sub2APIClientError.httpStatus(500, "down"))
+        ds.result = .failure(DeepSeekAPIClientError.httpStatus(500, "down"))
+        await store.refresh(force: true)
+
+        // Live UI keeps last-good values; disk cache is not rewritten with errors/empty.
+        XCTAssertEqual(cache.saveCount, 1)
+        XCTAssertEqual(cache.snapshot?.accountGroups.first?.accounts.first?.weekly?.usedPercent, 25)
+        XCTAssertEqual(store.accounts.first?.weekly?.usedPercent, 25)
+        XCTAssertEqual(store.sub2APIEntries.first?.usage?.availableBalance, 8)
+        XCTAssertEqual(store.deepSeekEntries.first?.usage?.totalBalance, 2)
+        XCTAssertEqual(store.menuTitle, "额度 75%")
+        XCTAssertNil(store.globalError)
+        XCTAssertNil(store.sub2APIEntries.first?.error)
+        XCTAssertNil(store.deepSeekEntries.first?.error)
+    }
+
+    func testFirstFailedRefreshDoesNotWriteCache() async {
+        let cache = InMemoryQuotaCacheStore()
+        let client = FakeClient(accounts: [], weekly: [:])
+        client.accountsError = CLIProxyClientError.httpStatus(503, "down")
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(baseURL: "https://example.test", managementKey: "k", refreshIntervalSeconds: 300),
+            includeMonthly: false,
+            clientFactory: { _ in client },
+            cacheStore: cache
+        )
+
+        await store.refresh(force: true)
+
+        XCTAssertEqual(cache.saveCount, 0)
+        XCTAssertNil(cache.snapshot)
+        XCTAssertTrue(store.accounts.isEmpty)
+        XCTAssertNil(store.globalError)
+    }
+
+    func testPerAccountFetchFailureKeepsPreviousQuotaWithoutError() async {
+        let accounts = [
+            AuthAccount(provider: "xai", email: "ok@x.ai", name: "ok.json", authIndex: "a")
+        ]
+        let client = FakeClient(
+            accounts: accounts,
+            weekly: [
+                "a": .success(WeeklyQuota(usedPercent: 15, periodStart: nil, periodEnd: nil, productUsage: []))
+            ]
+        )
+
+        let store = QuotaStore(
+            configuration: AppConfiguration(baseURL: "https://example.test", managementKey: "k", refreshIntervalSeconds: 300),
+            includeMonthly: false,
+            clientFactory: { _ in client }
+        )
+
+        await store.refresh(force: true)
+        XCTAssertEqual(store.accounts.first?.weekly?.usedPercent, 15)
+
+        client.weekly["a"] = .failure(CLIProxyClientError.httpStatus(500, "quota boom"))
+        await store.refresh(force: true)
+
+        XCTAssertEqual(store.accounts.first?.weekly?.usedPercent, 15)
+        XCTAssertNil(store.accounts.first?.errorMessage)
+        XCTAssertEqual(store.menuTitle, "额度 85%")
+        XCTAssertNil(store.globalError)
+    }
+
+    func testQuotaCacheRoundTripOnDisk() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aistat-cache-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("quota-cache.json")
+        let periodEnd = Date(timeIntervalSince1970: 1_700_000_100)
+        let original = QuotaCacheSnapshot(
+            accountGroups: [
+                CLIProxyAccountGroup(
+                    connectionID: "home",
+                    connectionName: "家里",
+                    accounts: [
+                        AccountQuota(
+                            connectionID: "home",
+                            connectionName: "家里",
+                            account: AuthAccount(
+                                provider: "xai",
+                                email: "a@x.ai",
+                                name: "a.json",
+                                authIndex: "a",
+                                unavailable: false,
+                                disabled: false
+                            ),
+                            weekly: WeeklyQuota(
+                                usedPercent: 25,
+                                periodStart: Date(timeIntervalSince1970: 1_700_000_000),
+                                periodEnd: periodEnd,
+                                productUsage: [ProductUsage(product: "grok", usagePercent: 25)]
+                            ),
+                            monthly: MonthlyQuota(limitCents: 10_000, usedCents: 2_500)
+                        )
+                    ],
+                    error: nil
+                )
+            ],
+            sub2APIEntries: [
+                Sub2APIUsageEntry(
+                    connectionID: "s1",
+                    connectionName: "主账户",
+                    usage: Sub2APIUsage(
+                        mode: "unrestricted",
+                        planName: "Pro",
+                        unit: "USD",
+                        balance: 12.34,
+                        remaining: 12.34,
+                        quota: nil,
+                        subscription: nil,
+                        usage: Sub2APIUsageStats(
+                            today: Sub2APIUsageWindow(actualCost: 1.1, cost: 1.2),
+                            total: nil
+                        )
+                    ),
+                    error: nil
+                )
+            ],
+            deepSeekEntries: [
+                DeepSeekUsageEntry(
+                    connectionID: "d1",
+                    connectionName: "DeepSeek",
+                    usage: DeepSeekBalance(isAvailable: true, currency: "USD", totalBalance: 5.5),
+                    error: nil
+                )
+            ],
+            lastRefreshAt: Date(timeIntervalSince1970: 1_700_000_050),
+            globalError: "partial"
+        )
+
+        try QuotaCacheStore.save(original, to: url)
+        let loaded = QuotaCacheStore.load(from: url)
+
+        XCTAssertEqual(loaded, original)
+        XCTAssertEqual(loaded?.deepSeekEntries.first?.usage?.totalBalance, 5.5)
+        XCTAssertEqual(loaded?.sub2APIEntries.first?.usage?.dailyUsageText, "$1.10")
     }
 }
 
@@ -861,6 +1198,20 @@ private final class FakeDeepSeekClient: DeepSeekClientProtocol, @unchecked Senda
         case .failure(let error):
             throw error
         }
+    }
+}
+
+private final class InMemoryQuotaCacheStore: QuotaCacheStoreProtocol, @unchecked Sendable {
+    var snapshot: QuotaCacheSnapshot?
+    private(set) var saveCount = 0
+
+    func load() -> QuotaCacheSnapshot? {
+        snapshot
+    }
+
+    func save(_ snapshot: QuotaCacheSnapshot) throws {
+        self.snapshot = snapshot
+        saveCount += 1
     }
 }
 

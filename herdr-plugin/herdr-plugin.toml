@@ -1,0 +1,32 @@
+id = "aistat.quota"
+name = "AIstat Quota"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "在 Herdr 中查看 AIstat 账号额度与余额（对齐 macOS 菜单栏主面板）"
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "open"
+title = "打开额度面板"
+contexts = ["workspace"]
+command = ["python3", "-m", "aistat_quota", "open"]
+
+[[actions]]
+id = "refresh"
+title = "刷新额度缓存"
+contexts = ["workspace"]
+command = ["python3", "-m", "aistat_quota", "refresh"]
+
+[[actions]]
+id = "show"
+title = "打印额度摘要"
+contexts = ["workspace"]
+command = ["python3", "-m", "aistat_quota", "show"]
+
+[[panes]]
+id = "main"
+title = "账号额度"
+placement = "popup"
+width = 72
+height = 36
+command = ["python3", "-m", "aistat_quota", "panel"]

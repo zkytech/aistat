@@ -78,7 +78,7 @@ cd aistat
 
 CLIProxyAPI 每组专属选项：
 
-- **优先消耗即将刷新额度的账号**（默认关闭，**按连接独立生效**）：开启后，该连接下列表按周额度重置时间临近程度排序，并把对应 priority 写回该 CLIProxyAPI。关闭时保持接口返回顺序，且不修改账号 priority。
+- **优先消耗即将刷新额度的账号**（默认关闭，**按连接独立生效**）：开启后，该连接下列表按周额度重置时间临近程度排序（**周限已归零**的账号固定排最后、priority 最低），并把对应 priority 写回该 CLIProxyAPI。关闭时保持接口返回顺序，且不修改账号 priority。
 
 菜单栏展示：
 
@@ -155,6 +155,17 @@ CLIProxyAPI 每组专属选项：
 4. 添加列表样式（Small / Medium / Large）或仪表盘（Large）
 
 若仍看不到：在终端执行 `killall chronod`，再重新打开编辑小组件界面。
+
+## Herdr 插件
+
+仓库内 `herdr-plugin/` 提供 **Herdr** 终端插件，在 TUI 中查看与菜单栏主面板对齐的额度 / 余额（读同一份 `config.json`）。
+
+```bash
+herdr plugin link /path/to/aistat/herdr-plugin
+herdr plugin pane open --plugin aistat.quota --entrypoint main
+```
+
+详见 [herdr-plugin/README.md](herdr-plugin/README.md)。
 
 ## 开发
 

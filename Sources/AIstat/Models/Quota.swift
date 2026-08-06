@@ -50,11 +50,6 @@ struct WeeklyQuota: Codable, Sendable, Equatable {
         remainingPercent.map { $0 <= 0 } ?? false
     }
 
-    /// Weekly usage just reset (0% used / full remaining). Deprioritized during near-refresh sort.
-    var isWeeklyUsageZeroed: Bool {
-        usedPercent.map { $0 <= 0 } ?? false
-    }
-
     /// When weekly `creditUsagePercent` is absent, mirror CLIProxy management UI:
     /// fall back to monthly included usage / limit as the displayed usage percent.
     func fillingMissingUsage(from monthly: MonthlyQuota?) -> WeeklyQuota {
@@ -430,15 +425,16 @@ enum DisplayDateFormatter {
 }
 
 enum AccountQuotaSorter {
-    /// Closer to refresh date first; weekly-zeroed accounts last; missing dates after non-zeroed;
-    /// stable by display name + authIndex.
+    /// Closer to refresh date first; weekly-exhausted (remaining 0%) accounts last;
+    /// missing dates after non-exhausted; stable by display name + authIndex.
+    /// Used for both menu-bar list order and CLIProxyAPI priority write-back.
     static func sortByRefreshProximity(_ items: [AccountQuota], now: Date = Date()) -> [AccountQuota] {
         items.sorted { lhs, rhs in
-            let leftZeroed = lhs.weekly?.isWeeklyUsageZeroed == true
-            let rightZeroed = rhs.weekly?.isWeeklyUsageZeroed == true
-            if leftZeroed != rightZeroed {
-                // Freshly reset (0% used) → lowest priority / end of list.
-                return !leftZeroed
+            let leftExhausted = lhs.weekly?.isExhausted == true
+            let rightExhausted = rhs.weekly?.isExhausted == true
+            if leftExhausted != rightExhausted {
+                // Weekly quota already at 0% remaining → lowest priority / end of list.
+                return !leftExhausted
             }
 
             let leftDistance = lhs.distanceToRefresh(from: now)
@@ -464,6 +460,7 @@ enum AccountQuotaSorter {
     }
 
     /// Higher priority value is preferred by CLIProxyAPI.
+    /// Order matches `sortByRefreshProximity` so menu UI and written priorities stay aligned.
     static func prioritiesByProximity(_ items: [AccountQuota], now: Date = Date()) -> [(name: String, priority: Int)] {
         let sorted = sortByRefreshProximity(items, now: now)
         let count = sorted.count

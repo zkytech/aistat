@@ -148,14 +148,14 @@ final class QuotaStoreTests: XCTestCase {
         let near = now.addingTimeInterval(3600)
         let far = now.addingTimeInterval(86_400)
         let expiredClose = now.addingTimeInterval(-600)
-        let zeroNear = now.addingTimeInterval(300)
+        let exhaustedNear = now.addingTimeInterval(300)
 
         let accounts = [
             AuthAccount(provider: "xai", email: "far@x.ai", name: "far.json", authIndex: "far"),
             AuthAccount(provider: "xai", email: "near@x.ai", name: "near.json", authIndex: "near"),
             AuthAccount(provider: "xai", email: "missing@x.ai", name: "missing.json", authIndex: "missing"),
             AuthAccount(provider: "xai", email: "expired@x.ai", name: "expired.json", authIndex: "expired"),
-            AuthAccount(provider: "xai", email: "zero@x.ai", name: "zero.json", authIndex: "zero")
+            AuthAccount(provider: "xai", email: "exhausted@x.ai", name: "exhausted.json", authIndex: "exhausted")
         ]
         let client = FakeClient(
             accounts: accounts,
@@ -164,8 +164,8 @@ final class QuotaStoreTests: XCTestCase {
                 "near": .success(WeeklyQuota(usedPercent: 20, periodStart: nil, periodEnd: near, productUsage: [])),
                 "missing": .success(WeeklyQuota(usedPercent: 30, periodStart: nil, periodEnd: nil, productUsage: [])),
                 "expired": .success(WeeklyQuota(usedPercent: 40, periodStart: nil, periodEnd: expiredClose, productUsage: [])),
-                // Closest periodEnd but weekly usage zeroed → lowest priority.
-                "zero": .success(WeeklyQuota(usedPercent: 0, periodStart: nil, periodEnd: zeroNear, productUsage: []))
+                // Closest periodEnd but weekly remaining 0% → last in menu list + lowest priority.
+                "exhausted": .success(WeeklyQuota(usedPercent: 100, periodStart: nil, periodEnd: exhaustedNear, productUsage: []))
             ]
         )
 
@@ -183,10 +183,11 @@ final class QuotaStoreTests: XCTestCase {
 
         await store.refresh(force: true)
 
-        XCTAssertEqual(store.accounts.map(\.account.authIndex), ["expired", "near", "far", "missing", "zero"])
+        // Menu bar UI order must match priority write-back order.
+        XCTAssertEqual(store.accounts.map(\.account.authIndex), ["expired", "near", "far", "missing", "exhausted"])
         XCTAssertEqual(
             client.priorityUpdates.last?.map(\.name),
-            ["expired.json", "near.json", "far.json", "missing.json", "zero.json"]
+            ["expired.json", "near.json", "far.json", "missing.json", "exhausted.json"]
         )
         XCTAssertEqual(client.priorityUpdates.last?.map(\.priority), [5, 4, 3, 2, 1])
     }

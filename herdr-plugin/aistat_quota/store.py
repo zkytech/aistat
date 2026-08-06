@@ -240,6 +240,7 @@ def _refresh_cli_group(
             seeded[index].error_message = err
 
     # Sort by refresh proximity if preferNearRefresh (read-only; no priority write-back).
+    # Exhausted (remaining 0%) accounts always last — same rule as macOS menu bar / priority write-back.
     if connection.prefer_near_refresh:
         now = datetime.now().astimezone()
 
@@ -248,7 +249,11 @@ def _refresh_cli_group(
                 return abs((item.weekly.period_end - now).total_seconds())
             return float("inf")
 
-        seeded.sort(key=lambda a: (distance(a), a.account.display_name.lower(), a.account.auth_index))
+        def sort_key(item: AccountQuota) -> tuple:
+            exhausted = 1 if (item.weekly and item.weekly.is_exhausted) else 0
+            return (exhausted, distance(item), item.account.display_name.lower(), item.account.auth_index)
+
+        seeded.sort(key=sort_key)
 
     return (
         CLIProxyAccountGroup(

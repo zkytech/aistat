@@ -375,7 +375,7 @@ struct SettingsView: View {
             Toggle(isOn: bindingCLIProxy(index).preferNearRefreshAccounts) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("优先消耗即将刷新额度的账号")
-                    Text("仅对本连接生效：按周额度重置时间排序（周限已归零的账号排最后），并同步该 CLIProxyAPI 的 priority。")
+                    Text("仅对本连接生效：按周额度重置时间排序列表与 priority（周额度已用尽的账号排最后）。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
